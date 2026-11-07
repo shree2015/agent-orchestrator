@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.6.0 - architecture overview and requirements traceability
+
+### Added
+- `docs/architecture.md` (and a PDF): components and layers, orchestration model, control flow of a node, dynamic change,
+  governance, human oversight and trust boundaries, observability, the three scenarios as instances of one engine, agents and the
+  LLM layer, a decision-and-trade-off table, quality attributes and limits. Diagrams are Mermaid.
+- `docs/architecture-reference.md`: generated from the real code by `scripts/gen_architecture_docs.py`: every workflow graph, the
+  controls on every stage, the policy catalogue (discovered by calling every policy factory), the event catalogue (read from the
+  engine's own audit calls) and the metrics.
+- `docs/requirements-traceability.md` (and a PDF): each item of the brief mapped to code, evidence and an honest status, with the
+  known gaps stated.
+- `scripts/build_docs_pdf.py` and `scripts/html_to_pdf.js`: developer tools that render the Mermaid diagrams and build the PDFs.
+- `tests/test_docs.py`: fails if a generated part is out of date, a document names a file or link that does not exist, a policy in
+  the code is missing from `policies.md`, or a diagram is malformed.
+- Gates now report what they enforce (`describe_gate`, `policy_ids`, `label`), which is what makes "which control guards which
+  stage" readable from the real graph.
+
+
 ## v0.5.4 - refusals are delivered cleanly (Windows connection resets)
 
 ### Fixed

@@ -97,6 +97,7 @@ def change_gate(path: str, pset: PolicySet | None = None, baseline: Mapping[str,
         return (not violations, "; ".join(str(v) for v in violations) if violations else "ok")
 
     gate.policy_categories = pset.categories
+    gate.policy_ids = tuple(f"{p.category}/{p.id}" for p in pset.policies)
     return gate
 
 

@@ -3,7 +3,7 @@
 Governed, agentic software-engineering automation: a prototype that turns a requirement into a reviewable
 engineering outcome, with agents executing under explicit controls and humans owning approvals.
 
-**Version: v0.5.4 (admin page with one-click service launch, real LLM support)**
+**Version: v0.6.0 (architecture documentation, admin page, real LLM support)**
 
 ## What this version contains
 * **Orchestration engine** (`orchestrator/core`): explicit dependency graph with entry/exit gates, parallel branches
@@ -52,8 +52,9 @@ pip install -r requirements-dev.txt
 ```
 python -m pytest -v
 ```
-Expected: **no failures**. With Node.js 18+ and `langgraph` both installed that is 366 passed; without Node.js the 2 browser-script
-tests are skipped, and without `langgraph` its 1 comparison test is skipped. Two tests are skipped automatically (reported as skipped, not failed) if an optional
+Expected: **no failures**. With Node.js 18+ and `langgraph` both installed that is 375 passed; without Node.js the 2 browser-script
+tests are skipped, without `langgraph` its 1 comparison test is skipped, and without the optional Mermaid command-line tool the
+1 diagram-rendering test is skipped. Two tests are skipped automatically (reported as skipped, not failed) if an optional
 tool is missing: the LangGraph comparison needs `pip install langgraph`, and the real-browser-logic UI test needs
 Node.js 18+ on PATH. Each of the shortener's own tests is listed by name in `tests/test_shortener_service.py`.
 
@@ -129,12 +130,15 @@ Simple graph version: `python -m simple_graph.demo happy` (also `fix_loop`, `alw
 orchestrator/   engine, governance (policies, gates, sandbox), observability, workflows, LLM clients, admin page
 simple_graph/   small LangGraph-style version
 tests/          unit, scenario, end-to-end and web-UI tests
-scripts/        smoke test for a running server, helpers
+scripts/        smoke test for a running server, documentation generator and PDF builder, helpers
 examples/       plain-English requirement templates
-docs/           testing approach, policy catalog, decisions (ADRs), scenario write-up, AI usage log
+docs/           architecture overview (+ PDF), traceability, testing approach, policy catalog, decisions (ADRs), scenarios, AI usage log
 ```
 
 ## Documentation
+* `docs/architecture.md` (also `docs/architecture.pdf`) - **architecture overview**: components, orchestration model, control flow, governance, trust boundaries, key decisions and trade-offs, limits
+* `docs/architecture-reference.md` - generated from the code: every workflow graph, the controls on every stage, the policy and event catalogues, the metrics
+* `docs/requirements-traceability.md` (also `docs/requirements-traceability.pdf`) - every item of the brief mapped to code, evidence and an honest status
 * `docs/scenarios/01-greenfield-url-shortener.md` - decomposition, orchestration, validation, risks
 * `docs/scenarios/02-brownfield-orphaned-clicks.md` - impact analysis, bounded patch, regression proof
 * `docs/scenarios/03-ambiguous-expiry.md` - questions, human decisions, traceability, automatic re-planning

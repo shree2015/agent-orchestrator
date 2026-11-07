@@ -88,6 +88,7 @@ def _result(violations: list[Violation]) -> tuple[bool, str]:
 
 def _tag(gate, pset: PolicySet):
     gate.policy_categories = pset.categories
+    gate.policy_ids = tuple(f"{p.category}/{p.id}" for p in pset.policies)      # what this gate enforces, for documentation and audit
     return gate
 
 

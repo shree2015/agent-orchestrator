@@ -17,6 +17,7 @@ def json_has_keys(*keys):
             return False, f"output is not valid JSON: {e}"
         missing = [k for k in keys if k not in data]
         return (not missing, f"missing keys: {missing}" if missing else "ok")
+    gate.label = f"json_has_keys({', '.join(keys)})"
     return gate
 
 
@@ -65,7 +66,16 @@ def require_inputs(*node_ids):
     def gate(ctx):
         missing = [n for n in node_ids if n not in ctx]
         return (not missing, f"missing upstream outputs: {missing}" if missing else "ok")
+    gate.label = f"require_inputs({', '.join(node_ids)})"
     return gate
+
+
+def describe_gate(gate) -> list[str]:
+    """The controls a gate applies, in words: its policy ids ('category/id'), else an explicit label, else its function name."""
+    ids = getattr(gate, "policy_ids", None)
+    if ids:
+        return list(ids)
+    return [getattr(gate, "label", None) or getattr(gate, "__name__", "gate")]
 
 
 # ---- brownfield gates: each is bound to the real baseline it is judging the change against ----
