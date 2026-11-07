@@ -1,0 +1,3 @@
+pytest>=7.0
+# Optional: only needed to run the LangGraph comparison in simple_graph (and its test)
+langgraph==1.2.20

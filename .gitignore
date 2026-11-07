@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+*.egg-info/
+
+# Run output and local databases (generate with the CLI; commit a sample deliberately if you want one)
+runs/
+*.db
+*.db-wal
+*.db-shm
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

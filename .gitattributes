@@ -1,0 +1,2 @@
+# Keep line endings stable across Windows and Linux so diffs and tests behave the same everywhere
+* text=auto eol=lf
