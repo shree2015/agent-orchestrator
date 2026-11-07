@@ -96,3 +96,24 @@ def regression_reproduced(baseline_code: str, baseline_tests: str):
 def changelog_ticket(ticket: str):
     from .policies import PolicySet
     return artifact_gate(PolicySet(compliance.changelog_references_ticket(ticket)), "docs")
+
+
+# ---- planning, clarification and traceability gates ----
+def plan_gate(ref, required_nodes):
+    from .policies import planning
+    return artifact_gate(planning.plan_set(ref, required_nodes), "plan")
+
+
+def traceability_gate(ref):
+    from .policies import planning
+    return artifact_gate(planning.traceability_set(ref), "tests")
+
+
+def clarification_gate(rules):
+    from .policies import clarification
+    return artifact_gate(clarification.clarification_set(rules), "clarifications")
+
+
+def decisions_honoured(mapping):
+    from .policies import PolicySet, clarification
+    return artifact_gate(PolicySet(clarification.implementation_honours_decisions(mapping)), "implementation")

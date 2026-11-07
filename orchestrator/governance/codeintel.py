@@ -82,3 +82,27 @@ def incompatibilities(old: dict | None, new: dict | None) -> list[str]:
     if old["kwarg"] and not new["kwarg"]:
         why.append("**kwargs support was removed")
     return why
+
+
+def _const(node):
+    """Evaluate a tiny, safe subset of constant expressions (literals and integer arithmetic)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float, str, bool, type(None))):
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        return -_const(node.operand)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv)):
+        a, b = _const(node.left), _const(node.right)
+        return {ast.Add: lambda: a + b, ast.Sub: lambda: a - b, ast.Mult: lambda: a * b, ast.FloorDiv: lambda: a // b}[type(node.op)]()
+    raise ValueError("not a simple constant")
+
+
+def module_constants(code: str) -> dict:
+    """Module-level `NAME = <simple constant expression>` assignments, evaluated safely (no code is run)."""
+    out = {}
+    for node in ast.parse(code).body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            try:
+                out[node.targets[0].id] = _const(node.value)
+            except (ValueError, TypeError, ZeroDivisionError):
+                continue
+    return out

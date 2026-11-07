@@ -5,6 +5,7 @@ Two knobs make failure paths demonstrable:
   * inject_failures(role, n)      -> the NEXT n calls for that role raise LLMError
                                      (lets a demo break an agent mid-run)
   * scripted:   {"developer": [bad_code, good_code]} -> responses served in order
+  * answers (scripted or default) may be callables taking the prompt, so output can depend on what the agent read
                 (last one repeats), e.g. first answer violates policy.
 """
 from __future__ import annotations
@@ -108,5 +109,7 @@ class MockLLM:
             k = self.successes[role]
         if role in self.scripted:
             seq = self.scripted[role]
-            return seq[min(k - 1, len(seq) - 1)]
-        return self.defaults[role]
+            answer = seq[min(k - 1, len(seq) - 1)]
+        else:
+            answer = self.defaults[role]
+        return answer(prompt) if callable(answer) else answer      # answers may depend on the prompt, like a real LLM

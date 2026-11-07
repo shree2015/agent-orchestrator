@@ -29,7 +29,17 @@ audit log, the run report and the metrics all say *which* rule fired.
 | `no-tests-removed`, `regression-test-reproduces-bug` | compliance | `tests` exit gate (brownfield) | same |
 | `changelog-references-ticket` | compliance | `docs` exit gate (brownfield) | same |
 | `public-api-stable` | change control | `implementation` exit gate (brownfield, via `ChangeSet`) | same |
-| `change-within-declared-impact` | change control | `implementation` exit gate (brownfield) | same |
+| `change-within-declared-impact` | change control | `implementation` exit gate (brownfield, ambiguous) | same |
+| `plan-well-formed` (unique ids, valid dependencies, no cycles) | compliance | `plan` exit gate | retry -> safe-stop |
+| `plan-maps-to-workflow` (tasks target real stages; key stages are planned) | compliance | `plan` exit gate | same |
+| `plan-sequencing-matches-graph` (the plan's order is executable as written) | compliance | `plan` exit gate | same |
+| `acceptance-criteria-traced` (every criterion maps to tasks and evidence) | compliance | `plan` exit gate | same |
+| `traceability-evidence-exists` (promised tests and gates really exist) | compliance | `tests` exit gate | same |
+| `decisions-cover-ambiguities` | compliance | `clarifications` exit gate | safe-stop (a person is not re-asked by retries) |
+| `high-risk-needs-human` (agents may not assume high-risk answers) | compliance | `clarifications` exit gate, and every `revise()` of it | same |
+| `answers-within-options`, `assumptions-have-rationale` | compliance | `clarifications` exit gate | same |
+| `decisions-consistent` (answers must not contradict each other) | compliance | `clarifications` exit gate | same |
+| `implementation-honours-decisions` (decisions are visible in the code) | compliance | `implementation` exit gate (ambiguous) | retry -> fallback -> safe-stop |
 
 ## Three layers, three subjects
 
@@ -43,6 +53,11 @@ audit log, the run report and the metrics all say *which* rule fired.
 A gate only protects you if it is attached. Nodes carry tags (`code`, `high_impact`, `release`) and
 `lint_graph` refuses to run a workflow in which a tagged node lacks its mandatory control. Governance
 cannot be silently configured away; the refusal itself is written to the audit log (`policy_lint`).
+
+## Revisions obey the same policies
+`Engine.revise()` runs the revised node's exit gates, so a human edit must satisfy the same policies as agent output
+(for example a contradictory answer is rejected), and a gate that crashes rejects the revision instead of passing it.
+See ADR 004 and ADR 005.
 
 ## Brownfield note
 The brownfield policies are *bound to a baseline*: gates are built with the real baseline code/tests

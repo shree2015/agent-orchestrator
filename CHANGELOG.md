@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.3.1 - complete deliverables for changes to an existing service
+
+### Fixed
+- Runs of the brownfield and ambiguous workflows wrote only the files they changed, so starting the generated service
+  printed "Web UI: not found". The run now carries over the existing, unchanged `ui.html` next to the changed code
+  (`run_workflow(..., assets=...)`, listed in the report). Carried-over files never overwrite agent output.
+
+### Added
+- End-to-end tests that start the generated ambiguous-scenario service and check the UI is served and the decided
+  default expiry (and the alias exception) is applied over real HTTP.
+
+## v0.3.0 - automatic re-planning, planner, ambiguous scenario
+
+### Added
+- Automatic re-planning: content fingerprints for every output, per-node records of the upstream fingerprints it
+  consumed, stale-node detection and `Engine.revise()`. A changed upstream output redoes exactly the dependent
+  nodes; an identical revision does nothing. Revisions run the node's exit gates, respect the re-plan budget and
+  are checkpointed, so a failed re-run rolls back the whole change including the edit. New metrics: `revisions`,
+  `revision_noops`, `revisions_rejected`, `auto_replans`, `nodes_replanned`.
+- Planner stage in the greenfield workflow and 5 planning policies (well-formed, maps to workflow, sequencing matches
+  the graph, acceptance criteria traced, promised tests exist).
+- Ambiguous scenario ("make links expire sensibly", FEAT-207): structured questions with risk levels, human decision
+  capture (`--answer`, `--approve ask`), 6 clarification policies (high-risk needs a human, answers within options,
+  assumptions need rationale, consistency, decisions visible in code), decision-aware mock agents.
+- CLI: `--answer`, `--revise-answer`, `--break-on-revise`; exit code 3 for a refused revision; new `--violate` demos.
+- Docs: scenario 3 write-up, ADR 004 and 005, policy catalog and testing approach updated.
+
+### Changed
+- Gates that crash during a revision reject it instead of crashing the engine; policies that cannot evaluate a rule
+  report a violation (fail closed).
+- Mock LLM answers may depend on the prompt (so outputs follow what the agent read).
+- Release evidence for the greenfield workflow now includes the plan.
+
+
 ## v0.2.0 - web UI and brownfield scenario
 
 ### Added

@@ -73,3 +73,13 @@ def test_keyword_only_and_varargs_rules():
     assert ci.incompatibilities(ci.public_api(old)["f"], ci.public_api("def f(a, k=1, **kw):\n    pass\n")["f"])
     assert ci.incompatibilities(ci.public_api(old)["f"], ci.public_api("def f(a, *args, k=1):\n    pass\n")["f"])
     assert ci.incompatibilities(ci.public_api(old)["f"], ci.public_api(old)["f"]) == []
+
+
+def test_module_constants_evaluates_simple_expressions_without_running_code():
+    code = "A = 3\nB = 90 * 24 * 3600\nC = -5\nD = 'x'\nE = True\nF = 7 // 2\nG = open('/etc/passwd')\nH = A + 1\nimport os\nos.getcwd()\n"
+    assert ci.module_constants(code) == {"A": 3, "B": 7776000, "C": -5, "D": "x", "E": True, "F": 3}
+
+
+def test_module_constants_ignores_names_defined_inside_functions_and_classes():
+    code = "X = 1\n\ndef f():\n    X = 2\n\nclass C:\n    X = 3\n"
+    assert ci.module_constants(code) == {"X": 1}

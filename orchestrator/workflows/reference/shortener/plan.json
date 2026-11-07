@@ -1,0 +1,20 @@
+{
+  "summary": "Build the URL shortener bottom-up: domain and storage first, then behaviour, then the HTTP surface; tests, docs and the UI run in parallel once the API contract exists",
+  "tasks": [
+    {"id": "T1", "title": "Validation, code allocation and SQLite repository", "node": "implementation", "depends_on": []},
+    {"id": "T2", "title": "Expiry, idempotent shorten and click analytics in the service layer", "node": "implementation", "depends_on": ["T1"]},
+    {"id": "T3", "title": "WSGI API: routing, error mapping, rate limiting, abuse protection", "node": "implementation", "depends_on": ["T2"]},
+    {"id": "T4", "title": "Single-page web UI served by the API", "node": "ui", "depends_on": ["T3"]},
+    {"id": "T5", "title": "Unit, API and concurrency tests", "node": "tests", "depends_on": ["T3"]},
+    {"id": "T6", "title": "API reference, error table and operational limits", "node": "docs", "depends_on": ["T3"]},
+    {"id": "T7", "title": "Review all artifacts together", "node": "review", "depends_on": ["T4", "T5", "T6"]}
+  ],
+  "traceability": [
+    {"criterion": "AC1", "tasks": ["T3", "T5"], "verified_by": {"tests": ["test_api_shorten_redirect_and_stats_flow"]}},
+    {"criterion": "AC2", "tasks": ["T2", "T5"], "verified_by": {"tests": ["test_clicks_are_counted_by_day_and_referrer"]}},
+    {"criterion": "AC3", "tasks": ["T2", "T5"], "verified_by": {"tests": ["test_expired_link_is_gone_and_unknown_is_not_found", "test_api_maps_errors_to_status_codes_and_stable_codes"]}},
+    {"criterion": "AC4", "tasks": ["T1", "T5"], "verified_by": {"tests": ["test_concurrent_shortening_is_safe_and_codes_are_unique"]}},
+    {"criterion": "AC5", "tasks": ["T2", "T3", "T5"], "verified_by": {"tests": ["test_analytics_failure_never_breaks_the_redirect", "test_api_rate_limit_returns_429_with_retry_after"]}},
+    {"criterion": "AC6", "tasks": ["T4"], "verified_by": {"gate": "ui", "tests": ["test_ui_is_served_at_root_with_strict_security_headers", "test_csp_allows_exactly_the_pages_own_inline_blocks_by_hash"]}}
+  ]
+}

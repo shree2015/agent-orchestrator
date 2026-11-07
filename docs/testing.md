@@ -9,6 +9,7 @@ Testing happens at four levels. Each answers a different question, and each can 
 | 3. Orchestration scenario tests | The whole governed pipeline building the shortener, under each failure and policy scenario, plus a real HTTP run of the generated file | `tests/test_shortener_workflow.py` | `pytest tests/test_shortener_workflow.py -v` |
 | 3b. Web UI | UI security/compliance policies; the page's real script driven by a Node harness against a live server (needs Node 18+, skipped otherwise); generated service started as a script and `/` fetched | `tests/test_ui.py`, `tests/ui_harness.js` | `pytest tests/test_ui.py -v` |
 | 3c. Brownfield | Scenario integrity (bug is real, fix works), each guard in isolation, every violation under the orchestrator | `tests/test_codeintel.py`, `tests/test_brownfield.py` | `pytest tests/test_brownfield.py -v` |
+| 3d. Re-planning, planning and ambiguity | Fingerprints, stale detection, `revise()` and its governance; planning and clarification policies; the ambiguous scenario end to end (blocked, answered, revised, rejected, rolled back) | `tests/test_replan.py`, `tests/test_planning.py`, `tests/test_clarification.py`, `tests/test_ambiguous.py` | `pytest tests/test_replan.py tests/test_ambiguous.py -v` |
 | 4. Live smoke test | A running server, driven over the network like a real client | `scripts/smoke_test.py`, checked by `tests/test_smoke_script.py` | `python scripts/smoke_test.py` |
 
 ## Single source of truth for the shortener tests
@@ -37,6 +38,12 @@ pytest -v                          # all levels except the long-form manual chec
 python scripts/smoke_test.py       # against a server you started yourself
 ```
 `pytest.ini` limits collection to `tests/`, so scripts in `scripts/` are never mistaken for tests.
+
+## Testing nondeterminism
+Parallel waves are real threads. A race I found while writing the ambiguous tests: when a node blocks, siblings in the
+same wave may or may not have started. The engine guarantees only that nothing from a *later* wave starts, so the tests
+assert exactly that; the racy assertion was removed after repeating the suite to measure it. The full suite is run
+several times in a row before delivery.
 
 ## UI testing without a browser
 There is no browser in the test environment, so `tests/ui_harness.js` runs the page's own inline script in Node

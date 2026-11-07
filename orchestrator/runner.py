@@ -13,18 +13,24 @@ from .governance.policies.change_control import lint_graph
 from .observability import metrics as metrics_mod
 from .observability.audit_log import AuditLog
 
-EXT = {"implementation": "py", "tests": "py", "requirements": "json", "ui": "html", "impact_analysis": "json"}
+EXT = {"implementation": "py", "tests": "py", "requirements": "json", "ui": "html", "impact_analysis": "json",
+       "clarifications": "json", "plan": "json"}
 
 
 # Events worth showing in the report's governance timeline.
 TIMELINE = {"attempt_failed", "fallback_engaged", "checkpoint", "replan", "rollback",
-            "change_committed", "change_rejected", "approval", "safe_stop"}
+            "change_committed", "change_rejected", "approval", "safe_stop",
+            "revision", "revision_noop", "revision_rejected", "policy_lint"}
 
 
 def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id: str | None = None,
-                 revisions=(), **engine_kwargs) -> dict:
+                 revisions=(), edits=(), on_replan=None, assets=None, **engine_kwargs) -> dict:
     """Run a workflow; optionally apply upstream revisions afterwards (dynamic re-planning).
 
+    assets: {filename: text} of baseline files the change did not touch; written next to the artifacts so the output
+    folder is a complete, runnable deliverable (e.g. brownfield changes keep the existing web UI).
+    edits: iterable of (node_id, new_content_or_callable(engine), reason[, by]) - each calls engine.revise(): the changed
+    output is fingerprinted and ONLY the nodes whose inputs changed are redone (an identical edit changes nothing).
     revisions: iterable of (node_id, reason, before_rerun) - after the run completes, the engine
     invalidates node_id (checkpointing downstream outputs), calls before_rerun() (e.g. to change
     agent behaviour), and runs again. A failed re-run is rolled back to the checkpoint.
@@ -39,6 +45,7 @@ def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id:
         raise GovernanceError(lint)
     engine = Engine(graph, agents, approver=approver, audit=audit, **engine_kwargs)
     status = engine.run()
+    revision_results = []
     for node_id, reason, before_rerun in revisions:
         if status is not RunStatus.COMPLETED:
             break                      # never re-plan on top of a halted run
@@ -47,6 +54,18 @@ def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id:
         if before_rerun:
             before_rerun()
         status = engine.run()
+    for edit in edits:                 # automatic re-planning: a changed upstream output redoes only what it affects
+        if status is not RunStatus.COMPLETED:
+            break
+        node_id, content, reason, *rest = edit
+        if callable(content):
+            content = content(engine)
+        result = engine.revise(node_id, content, reason, rest[0] if rest else "human")
+        revision_results.append(result)
+        if result.changed:
+            if on_replan:
+                on_replan()            # demos use this to make the re-run misbehave (e.g. to show rollback)
+            status = engine.run()
 
     m = metrics_mod.compute(audit.events)
     (run_dir / "metrics.json").write_text(json.dumps(m, indent=2), encoding="utf-8")
@@ -54,8 +73,13 @@ def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id:
     art.mkdir(exist_ok=True)
     for node_id, out in engine.context.items():
         (art / f"{node_id}.{EXT.get(node_id, 'md')}").write_text(out["content"], encoding="utf-8")
-    (run_dir / "report.md").write_text(render_report(run_id, engine, m, audit), encoding="utf-8")
-    return {"run_id": run_id, "run_dir": run_dir, "status": status, "metrics": m, "engine": engine, "audit": audit}
+    for name, content in (assets or {}).items():       # unchanged files of the existing codebase (e.g. the web UI)
+        if not (art / name).exists():                  # never overwrite something an agent produced
+            (art / name).write_text(content, encoding="utf-8")
+    (run_dir / "report.md").write_text(render_report(run_id, engine, m, audit) + (
+        "\n## Baseline files carried over unchanged\n" + "\n".join(f"- {n}" for n in sorted(assets)) + "\n" if assets else ""), encoding="utf-8")
+    return {"run_id": run_id, "run_dir": run_dir, "status": status, "metrics": m, "engine": engine, "audit": audit,
+            "revisions": revision_results}
 
 
 def render_report(run_id, engine, m, audit) -> str:

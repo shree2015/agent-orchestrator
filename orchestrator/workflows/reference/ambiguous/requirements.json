@@ -1,0 +1,48 @@
+{
+  "ticket": "FEAT-207",
+  "goal": "Links should not live forever by default: give new links a sensible, human-approved default lifetime without breaking existing links or clients",
+  "functional": [
+    "Links created without an explicit expiry receive a default expiry (length decided by a human)",
+    "Clients may still request an explicit expiry, up to a maximum (decided by a human)",
+    "Whether links with a custom alias also receive the default expiry is decided by a human",
+    "Expired links keep returning HTTP 410 and their statistics stay readable"
+  ],
+  "constraints": [
+    "Existing links, including permanent ones, are never modified or migrated",
+    "No change to routes, payloads or public Python signatures: new parameters must be optional",
+    "Expired links keep returning HTTP 410"
+  ],
+  "ambiguities": [
+    {
+      "id": "default_ttl_days",
+      "question": "How long should a new link live when the client gives no expiry?",
+      "options": [30, 90, 180],
+      "risk": "high",
+      "proposed": 90,
+      "why": "Changes the lifetime of every future link; a wrong answer silently breaks links people have already shared"
+    },
+    {
+      "id": "max_ttl_days",
+      "question": "What is the longest expiry a client may request?",
+      "options": [90, 365],
+      "risk": "medium",
+      "proposed": 365,
+      "why": "Keeping today's ceiling avoids rejecting requests that work now"
+    },
+    {
+      "id": "ttl_applies_to_aliases",
+      "question": "Should links with a custom alias also get the default expiry?",
+      "options": ["yes", "no"],
+      "risk": "medium",
+      "proposed": "no",
+      "why": "Aliases are usually deliberate campaign links; expiring them unasked would surprise their owners"
+    }
+  ],
+  "acceptance": [
+    "A link created without a ttl expires after the decided default and then returns 410",
+    "An explicit ttl overrides the default, and a ttl above the decided maximum is rejected",
+    "Alias links follow the decision on whether the default applies to them",
+    "Existing permanent links, idempotent re-shortening and the public API are unchanged",
+    "Every decision is visible in the code, covered by a test, and recorded in the changelog"
+  ]
+}

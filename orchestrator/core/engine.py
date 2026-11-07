@@ -11,9 +11,15 @@ Execution model
   failed node never pollutes downstream context (cheap, safe "rollback").
 * Any unrecoverable failure, rejection, or exceeded budget triggers SAFE-STOP:
   no new nodes start, unstarted descendants are SKIPPED.
-* invalidate() supports dynamic re-planning: it CHECKPOINTS the last good
-  outputs of the node and everything downstream, drops them, and the next run()
-  redoes them.
+* Automatic re-planning works like an incremental build: every committed output
+  has a content fingerprint, and every node remembers the fingerprints of all the
+  upstream outputs it consumed. revise() replaces an upstream output (a human
+  answer, an amended requirement); the engine compares fingerprints, finds exactly
+  the nodes whose inputs changed, checkpoints them and re-runs only those. An
+  identical revision changes nothing (no churn). Revisions obey the same governance
+  as normal work: exit gates, a stated reason, a re-plan budget, checkpoint/rollback.
+* invalidate() is the manual form: force a node and everything downstream to redo.
+  Either way the last good outputs are CHECKPOINTED first and the next run() redoes the work.
 * Resilience ladder for a failing node:
     retry (bounded, exponential backoff) -> fallback agent (same exit gates)
     -> safe-stop, then ROLLBACK of the whole change set to the checkpoint.
@@ -27,9 +33,12 @@ event-driven scheduler instead of waves.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -39,6 +48,21 @@ from .state import NodeState, RunStatus
 Agent = Callable[[Mapping[str, Any]], Any]          # context -> output
 Approver = Callable[[Node, Any], bool]              # (node, output) -> approved?
 AuditSink = Callable[[dict], None]
+
+
+def fingerprint_of(output: Any) -> str:
+    """Stable content fingerprint of a node output (dict outputs are fingerprinted by their content)."""
+    value = output.get("content") if isinstance(output, dict) and "content" in output else output
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class Revision:
+    """Outcome of Engine.revise(): accepted?  did anything change?  which nodes must be redone?"""
+    accepted: bool
+    changed: bool = False
+    affected: frozenset = frozenset()
+    why: str = ""
 
 
 class Engine:
@@ -76,7 +100,9 @@ class Engine:
         self.state: dict[str, NodeState] = {n: NodeState.PENDING for n in graph.nodes}
         self.context: dict[str, Any] = {}      # node_id -> committed output
         self.producer: dict[str, str] = {}     # node_id -> agent key that produced the committed output
-        self._checkpoint: dict[str, tuple[Any, str]] | None = None   # last good outputs before a re-plan
+        self.fingerprint: dict[str, str] = {}  # node_id -> fingerprint of the committed output
+        self._consumed: dict[str, dict[str, str]] = {}   # node_id -> {ancestor: fingerprint it saw}
+        self._checkpoint: dict[str, tuple] | None = None   # last good (output, producer, fingerprint, consumed)
         self.attempts: dict[str, int] = {n: 0 for n in graph.nodes}
         self._total_attempts = 0
         self._lock = threading.Lock()
@@ -88,6 +114,9 @@ class Engine:
     # ------------------------------------------------------------------
     def run(self) -> RunStatus:
         started = time.monotonic()
+        stale = self.stale_nodes()
+        if stale:                                   # safety net: never run on top of out-of-date results
+            self._replan_nodes(set(stale), trigger="stale-detected", reason="inputs changed since these nodes ran", auto=True)
         self._audit("run_started", pending=self._ids(NodeState.PENDING))
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             while not self._halt.is_set():
@@ -133,25 +162,101 @@ class Engine:
             return set()
         self._replans += 1
         affected = {node_id} | self.graph.downstream(node_id)
-        # Checkpoint the last GOOD outputs so a failed re-plan can be rolled back.
-        # (Keep the oldest checkpoint if a re-plan is invalidated again mid-flight.)
-        snapshot = {nid: (self.context[nid], self.producer.get(nid, "?"))
-                    for nid in affected if nid in self.context}
+        self._replan_nodes(affected, trigger=node_id, reason=reason, auto=False)
+        return affected
+
+    def stale_nodes(self) -> dict[str, list[str]]:
+        """DONE nodes whose recorded upstream fingerprints no longer match the current upstream outputs."""
+        stale: dict[str, list[str]] = {}
+        for nid, st in self.state.items():
+            if st is not NodeState.DONE or nid not in self._consumed:
+                continue
+            changed = [a for a in sorted(self.graph.ancestors(nid))
+                       if a in self.fingerprint and self._consumed[nid].get(a) != self.fingerprint[a]]
+            if changed:
+                stale[nid] = changed
+        return stale
+
+    def revise(self, node_id: str, content: Any, reason: str, by: str = "human") -> Revision:
+        """Replace a committed output (e.g. a human answer) and automatically re-plan what it affects.
+
+        Only nodes whose upstream fingerprints changed are redone. Governance still applies: a stated reason,
+        the re-plan budget, the node's exit gates, and (for agent-made revisions) human approval. Anything
+        rejected leaves the system untouched; anything that fails during the re-run is rolled back.
+        """
+        if node_id not in self.graph.nodes:
+            raise KeyError(f"unknown node: {node_id}")
+        node = self.graph.nodes[node_id]
+        if node_id not in self.context or self.state[node_id] not in (NodeState.DONE, NodeState.ROLLED_BACK):
+            return self._reject_revision(node_id, reason, "only a node with a committed output can be revised", rejected_change=True)
+        if not (reason or "").strip():
+            return self._reject_revision(node_id, reason, "a revision requires a stated reason", rejected_change=True)
+        old = self.context[node_id]
+        new = ({**old, "content": content, "role": by, "derived_from": [*old.get("derived_from", []), f"revision by {by}"]}
+               if isinstance(old, dict) else content)
+        new_fp = fingerprint_of(new)
+        old_fp = self.fingerprint.get(node_id) or fingerprint_of(old)
+        if new_fp == old_fp:
+            self._audit("revision_noop", node=node_id, by=by, reason=reason, fingerprint=old_fp[:12])
+            return Revision(True, False, why="identical to the current output; nothing to redo")
+        if self._replans >= self.max_replans:
+            return self._reject_revision(node_id, reason, f"re-plan budget exceeded ({self.max_replans})", rejected_change=True)
+        ctx: Mapping[str, Any] = MappingProxyType(dict(self.context))
+        failures = []
+        for gate in node.exit_gates:
+            try:
+                ok, why = gate(ctx, new)
+            except Exception as exc:                  # fail closed: a crashing check is a rejection
+                ok, why = False, f"gate crashed: {type(exc).__name__}: {exc}"
+            if not ok:
+                failures.append(why)
+        if failures:
+            return self._reject_revision(node_id, reason, "; ".join(failures))
+        if node.requires_approval and by != "human":      # a human edit is itself the approval
+            if not self.approver(node, new):
+                self._audit("approval", node=node_id, approved=False)
+                return self._reject_revision(node_id, reason, "revision not approved")
+        self._replans += 1
+        for nid, st in self.state.items():            # a new change starts from the last good state:
+            if st is NodeState.ROLLED_BACK and nid in self.context:       # restored outputs count as settled again
+                self.state[nid] = NodeState.DONE
+        self._snapshot({node_id} | self.graph.downstream(node_id), trigger=node_id)
+        with self._lock:
+            self.context[node_id] = new
+            self.producer[node_id] = by
+            self.fingerprint[node_id] = new_fp
+            self.state[node_id] = NodeState.DONE
+        self._audit("revision", node=node_id, by=by, reason=reason, old=old_fp[:12], new=new_fp[:12])
+        stale = self.stale_nodes()
+        self._replan_nodes(set(stale), trigger=node_id, reason=reason, auto=True,
+                           why=f"output of '{node_id}' changed ({old_fp[:8]} -> {new_fp[:8]})")
+        return Revision(True, True, frozenset(stale))
+
+    def _reject_revision(self, node_id: str, reason: str, why: str, rejected_change: bool = False) -> Revision:
+        self._audit("change_rejected" if rejected_change else "revision_rejected", trigger=node_id, reason=reason, why=why)
+        return Revision(False, why=why)
+
+    def _snapshot(self, nodes: set[str], trigger: str) -> None:
+        """Checkpoint the last GOOD outputs so a failed re-plan can be rolled back (oldest checkpoint wins)."""
+        snap = {n: (self.context[n], self.producer.get(n, "?"), self.fingerprint.get(n), self._consumed.get(n, {}))
+                for n in nodes if n in self.context}
         if self._checkpoint is None:
-            self._checkpoint = snapshot
+            self._checkpoint = snap
         else:
-            for nid, saved in snapshot.items():
-                self._checkpoint.setdefault(nid, saved)
-        if snapshot:
-            self._audit("checkpoint", trigger=node_id, nodes=sorted(snapshot))
-        for nid in affected:
+            for n, saved in snap.items():
+                self._checkpoint.setdefault(n, saved)
+        if snap:
+            self._audit("checkpoint", trigger=trigger, nodes=sorted(snap))
+
+    def _replan_nodes(self, nodes: set[str], trigger: str, reason: str, auto: bool, why: str = "") -> None:
+        self._snapshot(nodes, trigger)
+        for nid in nodes:
             self.state[nid] = NodeState.PENDING
-            self.context.pop(nid, None)
-            self.producer.pop(nid, None)
+            for table in (self.context, self.producer, self.fingerprint, self._consumed):
+                table.pop(nid, None)
         self._halt.clear()
         self.halt_reason = None
-        self._audit("replan", trigger=node_id, reason=reason, invalidated=sorted(affected))
-        return affected
+        self._audit("replan", trigger=trigger, reason=reason, invalidated=sorted(nodes), auto=auto, why=why)
 
     # ------------------------------------------------------------------
     # Internals
@@ -208,6 +313,8 @@ class Engine:
         with self._lock:
             self.context[node.id] = output
             self.producer[node.id] = used
+            self.fingerprint[node.id] = fingerprint_of(output)
+            self._consumed[node.id] = {a: self.fingerprint[a] for a in self.graph.ancestors(node.id) if a in self.fingerprint}
         self._audit("node_committed", node=node.id, agent=used, fallback=used != node.agent)
         self._set(node.id, NodeState.DONE)
 
@@ -248,9 +355,12 @@ class Engine:
         restored = sorted(self._checkpoint)
         failed = sorted(n for n, st in self.state.items() if st in (NodeState.FAILED, NodeState.REJECTED))
         with self._lock:
-            for nid, (output, producer) in self._checkpoint.items():
+            for nid, (output, producer, fp, consumed) in self._checkpoint.items():
                 self.context[nid] = output
                 self.producer[nid] = producer
+                if fp is not None:
+                    self.fingerprint[nid] = fp
+                self._consumed[nid] = consumed
                 self.state[nid] = NodeState.ROLLED_BACK
         self._audit("rollback", reason=self.halt_reason, trigger_nodes=failed, restored=restored)
         self._checkpoint = None

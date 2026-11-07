@@ -22,6 +22,7 @@ from ..core.graph import Graph, Node
 from ..governance import gates as g
 from ..governance.policies.compliance import RELEASE_EVIDENCE
 from ..llm import mock_client as mc
+from . import shortener
 from .slugify import release_agent
 
 _REF = Path(__file__).parent / "reference" / "brownfield"
@@ -31,6 +32,7 @@ TICKET = "BUG-142"
 CODE_PATH = "shortener.py"
 MAX_LINES_CHANGED = 40          # a bug fix in an existing codebase gets a much smaller budget than new code
 
+ASSETS = {"ui.html": shortener.GOOD_UI}        # part of the existing service; the fix does not touch it
 BUG_REPORT = read("bug_report.md")
 REQUIREMENT = BUG_REPORT
 BASELINE_CODE = read("baseline_shortener.py.txt")

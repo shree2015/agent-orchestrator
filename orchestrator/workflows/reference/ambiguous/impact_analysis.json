@@ -1,0 +1,25 @@
+{
+  "ticket": "FEAT-207",
+  "summary": "Expiry exists only when a client opts in with ttl_seconds, so almost every link lives forever. Add an optional service-level default and make the decided numbers explicit configuration.",
+  "root_cause": "ShortenerService.shorten only sets expires_at when ttl_seconds is supplied; there is no notion of a default lifetime and the numeric limits are not configurable from the entry point.",
+  "impacted": [
+    {"symbol": "<module>", "reason": "New module-level configuration: default expiry, maximum expiry and whether aliases get the default"},
+    {"symbol": "ShortenerService.__init__", "reason": "Accept an optional default_ttl_s (backward compatible: defaults to None, meaning no default expiry)"},
+    {"symbol": "ShortenerService.shorten", "reason": "Apply the default expiry when no ttl_seconds is given (and the alias rule allows it)"},
+    {"symbol": "serve", "reason": "Wire the decided default and maximum into the running service"},
+    {"symbol": "ShortenerService.resolve", "reason": "Reads expiry and returns 410 after it; reviewed, unchanged"},
+    {"symbol": "LinkRepository.find_permanent", "reason": "Idempotent reuse only matches non-expiring links, so links with a default expiry are never reused; reviewed, unchanged"}
+  ],
+  "new_symbols": [],
+  "apis_affected": ["POST /api/shorten (response now carries an expires_at for links created without ttl)", "GET /{code} (returns 410 after expiry)"],
+  "data_flows": [
+    "POST /api/shorten -> ShortenerService.shorten -> LinkRepository.add(expires_at) -> GET /{code} -> ShortenerService.resolve -> 410 when expired"
+  ],
+  "data_migration": "None. Existing links keep their stored expiry (stated constraint).",
+  "risks": [
+    "Behaviour change: links created from now on expire unless the client asks otherwise (hence the human decision)",
+    "Because links with an expiry are never reused, shortening the same URL twice now yields two links under a default expiry",
+    "The web UI's 'Never' option now means 'server default'; its label needs a follow-up outside this change"
+  ],
+  "out_of_scope": ["Migrating or expiring existing links", "UI wording", "Purging expired rows", "Expiry reminders"]
+}
