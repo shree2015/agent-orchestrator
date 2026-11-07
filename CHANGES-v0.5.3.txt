@@ -1,0 +1,22 @@
+PATCH v0.5.2 -> v0.5.3: the Start button works with the default (relative) runs folder
+
+APPLY (your project must be at v0.5.2): extract into the PARENT of your 'agent-orchestrator' folder and allow overwrite
+(or copy the zip's 'agent-orchestrator' folder contents into your repo). Then:  python -m pytest -v   -> expect NO failures
+(360 passed with Node.js and langgraph installed; otherwise the Node-based tests and/or the langgraph test show as skipped)
+IMPORTANT: stop the admin page (Ctrl+C) and start it again, so it loads the fixed code:  python -m orchestrator.admin --open
+
+git status afterwards should show exactly 0 new files and 6 modified files.
+
+NEW (0):
+  (none)
+
+MODIFIED (6):
+  ~ CHANGELOG.md
+  ~ README.md
+  ~ docs/ai-usage-log.md
+  ~ orchestrator/admin/service.py
+  ~ orchestrator/admin/session.py
+  ~ tests/test_admin_service.py
+
+DELETE BY HAND (0):
+  (none)

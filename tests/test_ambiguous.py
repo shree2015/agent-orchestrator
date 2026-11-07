@@ -281,16 +281,16 @@ def test_a_cli_run_carries_the_existing_web_ui_next_to_the_changed_code(tmp_path
 
 @pytest.mark.parametrize("default_days,aliases,alias_days", [(90, "no", None), (30, "yes", 30)])
 def test_the_generated_service_serves_its_ui_and_applies_the_decisions_over_real_http(tmp_path, default_days, aliases, alias_days):
-    import subprocess, sys, time, urllib.request
+    import os, subprocess, sys, time, urllib.request
     from datetime import datetime
+    from orchestrator.admin.service import spawn, terminate_tree
     assert cli.main(["run", "ambiguous", "--approve", "auto", "--answer", f"default_ttl_days={default_days}",
                      "--answer", f"ttl_applies_to_aliases={aliases}", "--run-root", str(tmp_path / "runs")]) == 0
     art = _latest_run(tmp_path / "runs") / "artifacts"
     work = tmp_path / "work"
     work.mkdir()
     port = _free_port()
-    proc = subprocess.Popen([sys.executable, str(art / "implementation.py"), str(port)], cwd=work,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    proc = spawn([sys.executable, str(art / "implementation.py"), str(port)], work, os.environ.copy(), subprocess.DEVNULL)
 
     def call(path, body=None):
         req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", json.dumps(body).encode() if body else None)
@@ -318,5 +318,4 @@ def test_the_generated_service_serves_its_ui_and_applies_the_decisions_over_real
         explicit = json.loads(call("/api/shorten", {"url": "https://example.com/short", "ttl_seconds": 3600})[1])
         assert seconds(explicit) == 3600                                                    # an explicit ttl still wins
     finally:
-        proc.terminate()
-        proc.wait(timeout=10)
+        terminate_tree(proc)                      # the whole tree: on Windows a venv's python.exe is a launcher with a child

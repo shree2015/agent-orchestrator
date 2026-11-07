@@ -10,6 +10,8 @@ Testing happens at four levels. Each answers a different question, and each can 
 | 3b. Web UI | UI security/compliance policies; the page's real script driven by a Node harness against a live server (needs Node 18+, skipped otherwise); generated service started as a script and `/` fetched | `tests/test_ui.py`, `tests/ui_harness.js` | `pytest tests/test_ui.py -v` |
 | 3c. Brownfield | Scenario integrity (bug is real, fix works), each guard in isolation, every violation under the orchestrator | `tests/test_codeintel.py`, `tests/test_brownfield.py` | `pytest tests/test_brownfield.py -v` |
 | 3d. Re-planning, planning and ambiguity | Fingerprints, stale detection, `revise()` and its governance; planning and clarification policies; the ambiguous scenario end to end (blocked, answered, revised, rejected, rolled back) | `tests/test_replan.py`, `tests/test_planning.py`, `tests/test_clarification.py`, `tests/test_ambiguous.py` | `pytest tests/test_replan.py tests/test_ambiguous.py -v` |
+| 3e. Real-LLM support | The real client against a fake Anthropic server (request shape, retries, fatal errors, budget, key never leaks), contracts and cleaning, retry feedback, hybrid routing, recording, whole workflows through the real client | `tests/test_real_llm.py` | `pytest tests/test_real_llm.py -v` |
+| 3f. Admin page | Request security (Host, token, Origin, limits), key handling (never echoed or stored), validation, every way a run can go through the API (approvals, rejection, stop, questions, revision, real mode against a fake server), launching generated services (loopback forced, environment scrubbed, confirmation, policy re-check), the page's script clicked through against a real server | `tests/test_admin_api.py`, `tests/test_admin_service.py`, `tests/test_admin_ui.py`, `tests/admin_harness.js` | `pytest tests/test_admin_api.py tests/test_admin_ui.py -v` |
 | 4. Live smoke test | A running server, driven over the network like a real client | `scripts/smoke_test.py`, checked by `tests/test_smoke_script.py` | `python scripts/smoke_test.py` |
 
 ## Single source of truth for the shortener tests
@@ -38,6 +40,22 @@ pytest -v                          # all levels except the long-form manual chec
 python scripts/smoke_test.py       # against a server you started yourself
 ```
 `pytest.ini` limits collection to `tests/`, so scripts in `scripts/` are never mistaken for tests.
+
+## Platform differences found by running on Windows
+Everything above was first built and tested on Linux. Three bugs only appeared when the suite was run on a Windows machine,
+each fixed and covered by a regression test that reproduces the cause on any OS:
+1. **Process trees**: a virtual environment's `python.exe` is a launcher with a child, so stopping only the launcher orphaned the
+   service and its port. Services now start in their own process group and are stopped as a tree.
+2. **Relative paths**: a child started in another working folder could not find a file given by a relative path. Every path
+   handed to a child is now absolute.
+3. **Unread request bodies**: closing a connection that holds unread data resets it on Windows, so a 429 arrived as "connection
+   reset". Both servers now read the body before replying.
+The lesson: test with the defaults and the operating system a user actually has, not only a convenient setup.
+
+## Testing a real model without calling one
+The real client is exercised through an injectable transport: a fake server answers with the same JSON format as the
+API, so retries, error handling and budgets are tested for real, and entire workflows run through the real client code.
+What this cannot show is how a live model behaves with the prompts; that needs your first live runs (see `docs/real-llm.md`).
 
 ## Testing nondeterminism
 Parallel waves are real threads. A race I found while writing the ambiguous tests: when a node blocks, siblings in the

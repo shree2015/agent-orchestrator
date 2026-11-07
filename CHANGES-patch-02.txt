@@ -1,0 +1,51 @@
+PATCH 02: web UI + brownfield scenario + incremental delivery
+Apply: extract over your project (this zip holds ONLY new/changed files).
+  Extract into the PARENT of your AgentOrchestrator folder and allow overwrite, or copy the contents of the
+  AgentOrchestrator folder inside the zip into your project. Then run: pytest -v
+
+NEW (19):
+  + docs/decisions/003-brownfield-declare-then-enforce.md
+  + docs/scenarios/02-brownfield-orphaned-clicks.md
+  + orchestrator/governance/codeintel.py
+  + orchestrator/workflows/brownfield.py
+  + orchestrator/workflows/reference/brownfield/baseline_shortener.py.txt
+  + orchestrator/workflows/reference/brownfield/baseline_tests.py.txt
+  + orchestrator/workflows/reference/brownfield/bug_report.md
+  + orchestrator/workflows/reference/brownfield/changelog.md
+  + orchestrator/workflows/reference/brownfield/design.md.txt
+  + orchestrator/workflows/reference/brownfield/fixed_shortener.py.txt
+  + orchestrator/workflows/reference/brownfield/fixed_tests.py.txt
+  + orchestrator/workflows/reference/brownfield/impact_analysis.json
+  + orchestrator/workflows/reference/brownfield/requirements.json
+  + orchestrator/workflows/reference/shortener/ui.html.txt
+  + scripts/run_shortener_tests.py
+  + tests/test_brownfield.py
+  + tests/test_codeintel.py
+  + tests/test_ui.py
+  + tests/ui_harness.js
+
+MODIFIED (19):
+  ~ README.md
+  ~ docs/ai-usage-log.md
+  ~ docs/policies.md
+  ~ docs/scenarios/01-greenfield-url-shortener.md
+  ~ docs/testing.md
+  ~ orchestrator/cli.py
+  ~ orchestrator/governance/gates.py
+  ~ orchestrator/governance/policies/change_control.py
+  ~ orchestrator/governance/policies/compliance.py
+  ~ orchestrator/governance/policies/security.py
+  ~ orchestrator/observability/audit_log.py
+  ~ orchestrator/runner.py
+  ~ orchestrator/workflows/reference/shortener/design.md.txt
+  ~ orchestrator/workflows/reference/shortener/docs.md
+  ~ orchestrator/workflows/reference/shortener/requirements.json
+  ~ orchestrator/workflows/reference/shortener/shortener.py.txt
+  ~ orchestrator/workflows/reference/shortener/tests.py.txt
+  ~ orchestrator/workflows/shortener.py
+  ~ orchestrator/workflows/slugify.py
+
+DELETE BY HAND (0):
+  (none)
+
+If you created tests\my_test.py earlier, delete it: pytest would collect it. scripts\run_shortener_tests.py replaces it.

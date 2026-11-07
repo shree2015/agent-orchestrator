@@ -8,6 +8,7 @@ venv/
 
 # Run output and local databases (generate with the CLI; commit a sample deliberately if you want one)
 runs/
+llm-records/
 *.db
 *.db-wal
 *.db-shm

@@ -41,7 +41,7 @@ Errors are JSON `{"error": {"code", "message"}}`:
 Open `http://localhost:8000/` after starting the server. Create links with an optional alias and expiry, copy the result, and see links created in this browser with live click stats (no list endpoint exists, so the browser remembers them). The page uses no external resources, renders all data as text, and is served with `nosniff`, `no-referrer` and a hash-based CSP.
 
 ## Reliability and safety
-Collision retry then 503; analytics failures never break redirects; expired aliases can be reclaimed; parameterised SQL; 500 responses never expose internals; request bodies capped at 4 KB.
+Request bodies are always read before the service replies, even when it refuses (429, 404, 405), so a refusal is delivered cleanly and is never turned into a connection reset. Collision retry then 503; analytics failures never break redirects; expired aliases can be reclaimed; parameterised SQL; 500 responses never expose internals; request bodies capped at 4 KB.
 
 ## Limitations
 No DNS resolution, so a public hostname that resolves to a private address is not blocked; rate limiter state is per process; `serve` is single-threaded; no authentication, so any client can delete any link (an owner token is the next step).

@@ -1,5 +1,6 @@
 """Web UI: policies, pipeline scenarios, and real behaviour of the page script against a real server."""
 import importlib.util
+import os
 import shutil
 import socket
 import subprocess
@@ -13,6 +14,7 @@ from wsgiref.simple_server import WSGIRequestHandler, make_server
 import pytest
 
 from orchestrator import cli
+from orchestrator.admin.service import spawn, terminate_tree
 from orchestrator.core.state import NodeState, RunStatus
 from orchestrator.governance import approvals
 from orchestrator.governance.policies import change_control as cc, compliance as comp, security as sec
@@ -170,8 +172,7 @@ def test_generated_service_serves_its_ui_when_started_as_a_script(tmp_path):
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
-    proc = subprocess.Popen([sys.executable, str(art / "implementation.py"), str(port)], cwd=tmp_path,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    proc = spawn([sys.executable, str(art / "implementation.py"), str(port)], tmp_path, os.environ.copy(), subprocess.DEVNULL)
     try:
         page, headers = None, None
         for _ in range(50):
@@ -184,5 +185,4 @@ def test_generated_service_serves_its_ui_when_started_as_a_script(tmp_path):
         assert page is not None, "server did not start"
         assert "<title>Shortener" in page and "default-src 'none'" in headers["Content-Security-Policy"]
     finally:
-        proc.terminate()
-        proc.wait(timeout=10)
+        terminate_tree(proc)                      # the whole tree: on Windows a venv's python.exe is a launcher with a child

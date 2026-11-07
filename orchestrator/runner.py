@@ -24,13 +24,15 @@ TIMELINE = {"attempt_failed", "fallback_engaged", "checkpoint", "replan", "rollb
 
 
 def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id: str | None = None,
-                 revisions=(), edits=(), on_replan=None, assets=None, **engine_kwargs) -> dict:
+                 revisions=(), edits=(), on_replan=None, assets=None, llm=None, on_start=None, **engine_kwargs) -> dict:
     """Run a workflow; optionally apply upstream revisions afterwards (dynamic re-planning).
 
     assets: {filename: text} of baseline files the change did not touch; written next to the artifacts so the output
     folder is a complete, runnable deliverable (e.g. brownfield changes keep the existing web UI).
     edits: iterable of (node_id, new_content_or_callable(engine), reason[, by]) - each calls engine.revise(): the changed
     output is fingerprinted and ONLY the nodes whose inputs changed are redone (an identical edit changes nothing).
+    on_start: called as on_start(engine, audit, run_dir) right after the engine exists and before it runs, so a caller
+    (the admin page) can watch the live engine.
     revisions: iterable of (node_id, reason, before_rerun) - after the run completes, the engine
     invalidates node_id (checkpointing downstream outputs), calls before_rerun() (e.g. to change
     agent behaviour), and runs again. A failed re-run is rolled back to the checkpoint.
@@ -43,7 +45,11 @@ def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id:
     audit({"ts": time.time(), "event": "policy_lint", "passed": not lint, "violations": [str(v) for v in lint]})
     if lint:
         raise GovernanceError(lint)
+    if llm is not None and hasattr(llm, "bind_audit"):
+        llm.bind_audit(audit)          # real clients log every call (tokens, latency, prompt hash) into the audit chain
     engine = Engine(graph, agents, approver=approver, audit=audit, **engine_kwargs)
+    if on_start:
+        on_start(engine, audit, run_dir)
     status = engine.run()
     revision_results = []
     for node_id, reason, before_rerun in revisions:
@@ -67,6 +73,16 @@ def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id:
                 on_replan()            # demos use this to make the re-run misbehave (e.g. to show rollback)
             status = engine.run()
 
+    m = write_outputs(run_dir, run_id, engine, audit, assets)
+    return {"run_id": run_id, "run_dir": run_dir, "status": status, "metrics": m, "engine": engine, "audit": audit,
+            "revisions": revision_results}
+
+
+def write_outputs(run_dir: Path, run_id: str, engine, audit, assets=None) -> dict:
+    """(Re)write metrics.json, the artifacts folder and report.md from the engine's current state; returns the metrics.
+
+    Safe to call again after a later revision: it simply reflects the latest state.
+    """
     m = metrics_mod.compute(audit.events)
     (run_dir / "metrics.json").write_text(json.dumps(m, indent=2), encoding="utf-8")
     art = run_dir / "artifacts"
@@ -78,8 +94,7 @@ def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id:
             (art / name).write_text(content, encoding="utf-8")
     (run_dir / "report.md").write_text(render_report(run_id, engine, m, audit) + (
         "\n## Baseline files carried over unchanged\n" + "\n".join(f"- {n}" for n in sorted(assets)) + "\n" if assets else ""), encoding="utf-8")
-    return {"run_id": run_id, "run_dir": run_dir, "status": status, "metrics": m, "engine": engine, "audit": audit,
-            "revisions": revision_results}
+    return m
 
 
 def render_report(run_id, engine, m, audit) -> str:

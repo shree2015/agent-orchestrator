@@ -3,7 +3,7 @@
 Governed, agentic software-engineering automation: a prototype that turns a requirement into a reviewable
 engineering outcome, with agents executing under explicit controls and humans owning approvals.
 
-**Version: v0.3.0 (three scenarios, automatic re-planning, planner)**
+**Version: v0.5.4 (admin page with one-click service launch, real LLM support)**
 
 ## What this version contains
 * **Orchestration engine** (`orchestrator/core`): explicit dependency graph with entry/exit gates, parallel branches
@@ -25,14 +25,21 @@ engineering outcome, with agents executing under explicit controls and humans ow
   analysis, a patch bound to its declared blast radius, backward-compatible API, and a regression test that must
   fail on the old code.
 * **`simple_graph/`:** a small LangGraph-style version of the same idea, useful for understanding the design.
-* Agents are an **offline mock LLM** that returns reviewed reference artifacts, so everything runs without API
-  keys. The gates judge the real code either way.
+* Agents are an **offline mock LLM** by default (reviewed reference artifacts, no API key needed; the gates judge real
+  code either way). A **real model** can be put behind any or all agents (`--llm anthropic`), with feedback on retries,
+  a hard call budget and token accounting; see `docs/real-llm.md`. Not yet exercised against the live API in the build
+  environment.
 
 * **Scenario 3, ambiguous:** "make links expire sensibly": the vague request becomes structured questions; high-risk
   ones can only be answered by a human (no human, no guess: the run stops safely); decisions are validated, must
   appear in the code, and can be changed later with an automatic, minimal, rollback-safe re-plan.
 
-**Planned for later versions:** real LLM client, architecture overview and final engineering summary.
+* **Admin page** (`python -m orchestrator.admin`): a local control panel to write a requirement, switch between mock and
+  real agents, generate, watch the run and make every human decision (approvals, questions, stop, change an answer) on
+  the page, then **start the generated service from the page** (loopback-only, scrubbed environment, confirmation for
+  real-model code); see `docs/admin-page.md`.
+
+**Planned for later versions:** architecture overview and final engineering summary.
 
 ## Setup (Python 3.10+)
 ```
@@ -45,7 +52,8 @@ pip install -r requirements-dev.txt
 ```
 python -m pytest -v
 ```
-Expected: **281 passed**. Two tests are skipped automatically (reported as skipped, not failed) if an optional
+Expected: **no failures**. With Node.js 18+ and `langgraph` both installed that is 366 passed; without Node.js the 2 browser-script
+tests are skipped, and without `langgraph` its 1 comparison test is skipped. Two tests are skipped automatically (reported as skipped, not failed) if an optional
 tool is missing: the LangGraph comparison needs `pip install langgraph`, and the real-browser-logic UI test needs
 Node.js 18+ on PATH. Each of the shortener's own tests is listed by name in `tests/test_shortener_service.py`.
 
@@ -58,6 +66,22 @@ python scripts/run_shortener_tests.py                                          #
 ```
 Then open **http://localhost:8000/** for the web UI (it is `ui.html`, produced by the pipeline and served from the
 same folder as `implementation.py`).
+
+Admin page (everything below, but with buttons; see `docs/admin-page.md`):
+```
+python -m orchestrator.admin --open        # http://127.0.0.1:8765/  (local only)
+```
+
+Real model and your own requirements (see `docs/real-llm.md`):
+```
+set ANTHROPIC_API_KEY=sk-ant-...                      # Windows Command Prompt; PowerShell: $env:ANTHROPIC_API_KEY="..."
+python -m orchestrator.cli run shortener --approve auto --record llm-records/preview            # free preview of every prompt
+python -m orchestrator.cli run slugify --llm anthropic --approve auto                           # smallest live test (~6 calls)
+python -m orchestrator.cli run shortener --llm anthropic --llm-roles architect,doc_writer,reviewer --approve auto   # hybrid
+python -m orchestrator.cli run shortener --llm anthropic --requirement-file examples/requirements/url-shortener.md --approve auto
+```
+Edit `examples/requirements/url-shortener.md` to rewrite the requirements in your own words. With the default mock, a
+custom requirement is ignored (the CLI says so): your wording only matters with a real model.
 
 Ambiguous scenario (see `docs/scenarios/03-ambiguous-expiry.md`):
 ```
@@ -102,10 +126,11 @@ Simple graph version: `python -m simple_graph.demo happy` (also `fix_loop`, `alw
 
 ## Layout
 ```
-orchestrator/   engine, governance (policies, gates, sandbox), observability, workflows, mock LLM
+orchestrator/   engine, governance (policies, gates, sandbox), observability, workflows, LLM clients, admin page
 simple_graph/   small LangGraph-style version
 tests/          unit, scenario, end-to-end and web-UI tests
 scripts/        smoke test for a running server, helpers
+examples/       plain-English requirement templates
 docs/           testing approach, policy catalog, decisions (ADRs), scenario write-up, AI usage log
 ```
 
@@ -114,6 +139,8 @@ docs/           testing approach, policy catalog, decisions (ADRs), scenario wri
 * `docs/scenarios/02-brownfield-orphaned-clicks.md` - impact analysis, bounded patch, regression proof
 * `docs/scenarios/03-ambiguous-expiry.md` - questions, human decisions, traceability, automatic re-planning
 * `docs/policies.md` - catalog of every policy and where it is enforced
+* `docs/admin-page.md` - the local admin page: runs, decisions, mock/real toggle, key handling, security model
+* `docs/real-llm.md` - running with a real model, cost and safety limits, troubleshooting
 * `docs/testing.md` - testing approach and known gaps
-* `docs/decisions/` - ADR 001 (resilience ladder), ADR 002 (policy-as-code), ADR 003 (brownfield: declare, then enforce), ADR 004 (fingerprint-based re-planning), ADR 005 (human decisions and traceability)
+* `docs/decisions/` - ADR 001 (resilience ladder), ADR 002 (policy-as-code), ADR 003 (brownfield: declare, then enforce), ADR 004 (fingerprint-based re-planning), ADR 005 (human decisions and traceability), ADR 006 (real LLM integration), ADR 007 (admin page), ADR 008 (launching generated services)
 * `docs/ai-usage-log.md` - how AI was used and how its output was verified

@@ -10,6 +10,7 @@ Definitions:
                          (nodes that never recover are excluded, not counted as zero)
   * policy_violations  - how often each named policy ("category/policy-id") blocked an output
   * changes_rejected   - re-plans refused by change control (no reason, or re-plan budget exceeded)
+  * llm_calls / llm_*_tokens - real model usage (from the audit log; zero for the mock)
   * revisions          - accepted upstream revisions (e.g. a human changed an answer); revision_noops are
                          identical edits that triggered nothing; revisions_rejected failed a gate or approval
   * auto_replans       - re-plans the engine derived itself from changed fingerprints (vs. forced ones)
@@ -61,6 +62,9 @@ def compute(events: list[dict]) -> dict:
         "rollbacks": len(by("rollback")),
         "replans": len(by("replan")),
         "changes_rejected": len(by("change_rejected")),
+        "llm_calls": len(by("llm_call")),
+        "llm_input_tokens": sum(e.get("input_tokens", 0) for e in by("llm_call")),
+        "llm_output_tokens": sum(e.get("output_tokens", 0) for e in by("llm_call")),
         "revisions": len(by("revision")),
         "revision_noops": len(by("revision_noop")),
         "revisions_rejected": len(by("revision_rejected")),

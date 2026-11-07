@@ -75,12 +75,13 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
         graph.add(Node("ui", "frontend", depends_on=("implementation",), max_retries=2, tags=("code",),
                        exit_gates=(g.ui_security, g.ui_compliance, g.change_control_gate("ui.html", max_lines=500)),
                        description="Generate the web UI; HTML/JS security + API-wiring + accessibility gates"))
+    original = "### original request (exact names, routes, numbers and limits here are binding)\n" + requirement
     agents = {
-        "requirements": llm_agent(llm, "requirements", "Extract requirements as JSON with keys goal, functional, ambiguities, acceptance.", seed=requirement),
-        "architect": llm_agent(llm, "architect", "Produce a concise design.", ("requirements",)),
-        "developer": llm_agent(llm, "developer", "Write the Python implementation only.", ("requirements", "design")),
-        "developer_fallback": llm_agent(llm, "developer_fallback", "Write the SIMPLEST correct Python implementation only. No extras.", ("requirements", "design")),
-        "tester": llm_agent(llm, "tester", "Write plain test_ functions (no imports of the module).", ("requirements", "implementation")),
+        "requirements": llm_agent(llm, "requirements", "Extract requirements as JSON with keys goal, functional, constraints, ambiguities, acceptance. Preserve every exact name, route and number from the request.", seed=requirement),
+        "architect": llm_agent(llm, "architect", "Produce a concise design for this request.", ("requirements",) + (("plan",) if plan else ()), seed=original),
+        "developer": llm_agent(llm, "developer", "Write the complete Python implementation for this request.", ("requirements", "design"), seed=original),
+        "developer_fallback": llm_agent(llm, "developer_fallback", "Write the SIMPLEST correct Python implementation only. No extras.", ("requirements", "design"), seed=original),
+        "tester": llm_agent(llm, "tester", "Write plain test_ functions (do not import the module under test)." + (" Create every test name the plan promises." if plan else ""), ("requirements", "implementation") + (("plan",) if plan else ())),
         "doc_writer": llm_agent(llm, "doc_writer", "Write markdown docs.", ("design", "implementation")),
         "reviewer": llm_agent(llm, "reviewer", "Reply APPROVE or REJECT with reasons.", ("implementation", "tests", "docs")),
         "release_manager": release_agent,
@@ -88,7 +89,7 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
     if plan:
         agents["planner"] = llm_agent(llm, "planner", "Decompose the requirement into JSON tasks (id, title, node, depends_on) plus acceptance-criterion traceability.", ("requirements",))
     if ui:
-        agents["frontend"] = llm_agent(llm, "frontend", "Write ONE self-contained index.html (inline CSS and JS, no external resources) that calls the documented API.", ("requirements", "design", "implementation"))
+        agents["frontend"] = llm_agent(llm, "frontend", "Write ONE self-contained index.html (inline CSS and JS, no external resources) that calls exactly the API routes the request and the implementation define.", ("requirements", "design", "implementation"), seed=original)
     ref.graph = graph
     return graph, agents
 

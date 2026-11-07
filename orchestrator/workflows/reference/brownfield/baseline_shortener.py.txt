@@ -371,6 +371,27 @@ def csp_for(html: str) -> str:
             "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 
 
+def _drain_request_body(environ) -> None:
+    """Read and discard a request body that nobody read (at most 1 MiB, in chunks).
+
+    Replying and then closing a connection that still has unread incoming data makes some systems (notably Windows) reset it,
+    so the client sees "connection reset" instead of our answer. A refusal such as 429 must reach the client intact.
+    """
+    if environ.get("shortener.body_consumed"):
+        return
+    try:
+        length = int(environ.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        return
+    remaining = min(length, 1 << 20)  # a client sending more than 1 MiB to be refused gets what it deserves
+    while remaining > 0:
+        chunk = environ["wsgi.input"].read(min(remaining, 65536))
+        if not chunk:
+            break
+        remaining -= len(chunk)
+    environ["shortener.body_consumed"] = True
+
+
 def _iso(ts: float | None) -> str | None:
     return None if ts is None else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
 
@@ -408,8 +429,10 @@ def make_app(service: ShortenerService, limiter: RateLimiter | None = None,
             raise ShortenerError("invalid Content-Length") from None
         if length > MAX_BODY_BYTES:
             raise PayloadTooLarge(f"body exceeds {MAX_BODY_BYTES} bytes")
+        raw = environ["wsgi.input"].read(length)
+        environ["shortener.body_consumed"] = True
         try:
-            data = json.loads(environ["wsgi.input"].read(length) or b"")
+            data = json.loads(raw or b"")
         except ValueError:
             raise ShortenerError("body must be valid JSON") from None
         if not isinstance(data, dict):
@@ -460,6 +483,8 @@ def make_app(service: ShortenerService, limiter: RateLimiter | None = None,
         except Exception:  # never leak internals to clients
             log.exception("unhandled error")
             return respond(start_response, 500, {"error": {"code": "internal_error", "message": "internal error"}})
+        finally:
+            _drain_request_body(environ)  # whatever the outcome: never leave unread data on the connection
 
     return app
 

@@ -1,6 +1,7 @@
 """Usage:  python -m orchestrator.cli run slugify|shortener|brownfield|ambiguous [--approve ask|auto|deny:<node>] [--fail developer:2]
                                               [--leak-secret] [--revise-design ok|fail|reject]
                                               [--backoff 0.1] [--max-replans 3] [--run-root runs]
+         [--requirement TEXT | --requirement-file PATH] [--llm mock|anthropic] [--llm-roles a,b] [--model NAME] [--record DIR]
                                               [--violate secret|import|undocumented|thin-tests|empty-docs]
 
 Policy demos (each makes named policies fire; names are per workflow, see docs/policies.md):
@@ -31,8 +32,13 @@ import sys
 
 from .governance import approvals
 from .governance.policies import GovernanceError
+from .llm import anthropic_client
+from .llm.base import LLMError
+from .llm.routing import RecordingLLM, RoutingLLM
 from .runner import run_workflow
 import inspect
+import os
+from pathlib import Path
 
 from .workflows import ambiguous, brownfield, shortener, slugify
 
@@ -80,6 +86,19 @@ def main(argv=None) -> int:
     r.add_argument("--revise-answer", action="append", default=[], metavar="ID=VALUE",
                    help="after a successful run, change an earlier answer (automatic re-plan)")
     r.add_argument("--break-on-revise", action="store_true", help="make the developer fail during the re-run after --revise-answer")
+    r.add_argument("--requirement", metavar="TEXT", help="the requirement, in plain English (replaces the built-in one)")
+    r.add_argument("--requirement-file", metavar="PATH", help="read the requirement from a UTF-8 text/markdown file")
+    r.add_argument("--llm", choices=["mock", "anthropic"], default="mock",
+                   help="mock = offline stored artifacts (default); anthropic = a real model (needs ANTHROPIC_API_KEY)")
+    r.add_argument("--llm-roles", metavar="ROLES", help="hybrid: only these comma-separated roles use the real model "
+                   "(e.g. requirements,architect,doc_writer); the rest stay on the mock")
+    r.add_argument("--model", default=os.environ.get("ANTHROPIC_MODEL", anthropic_client.DEFAULT_MODEL),
+                   help="model name for --llm anthropic (default: env ANTHROPIC_MODEL or %(default)s)")
+    r.add_argument("--max-tokens", type=int, default=16000, help="per-call output limit (a cut-off answer is rejected)")
+    r.add_argument("--max-llm-calls", type=int, default=40, help="hard budget on real model calls for this run")
+    r.add_argument("--llm-timeout", type=float, default=300.0, help="seconds to wait for one model call")
+    r.add_argument("--record", metavar="DIR", help="save the system prompt, prompt and response of every LLM call as JSON "
+                   "(with --llm mock this is a free preview of exactly what a real run would send)")
     r.add_argument("--max-replans", type=int, default=3, help="change control: re-plans allowed per run")
     r.add_argument("--run-root", default="runs")
     a = p.parse_args(argv)
@@ -90,8 +109,36 @@ def main(argv=None) -> int:
     unknown = [v for v in violations if v not in wf.VIOLATIONS]
     if unknown:
         p.error(f"--violate {unknown[0]!r} is not defined for '{a.workflow}'; choose from: {', '.join(sorted(wf.VIOLATIONS))}")
+    real = a.llm == "anthropic"
+    if real and (violations or fail):
+        p.error("--violate/--leak-secret/--fail script the MOCK model; they cannot be combined with --llm anthropic")
+    if a.llm_roles and not real:
+        p.error("--llm-roles needs --llm anthropic")
+    requirement = a.requirement
+    if a.requirement_file:
+        try:
+            requirement = Path(a.requirement_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            p.error(f"cannot read --requirement-file: {exc}")
     scripted = scripted_answers(wf, violations)
     llm = wf.make_llm(fail_times=fail, scripted=scripted)
+    client = None
+    if real:
+        try:
+            client = anthropic_client.AnthropicClient(model=a.model, max_tokens=a.max_tokens, max_calls=a.max_llm_calls,
+                                                      timeout=a.llm_timeout)
+        except LLMError as exc:
+            print(f"ERROR: {exc}")
+            return 2
+        roles = [r.strip() for r in a.llm_roles.split(",") if r.strip()] if a.llm_roles else None
+        llm = client if not roles else RoutingLLM(llm, {r: client for r in roles})
+        print(f"REAL MODEL: {a.model} for {', '.join(roles) if roles else 'all agent roles'} | call budget {a.max_llm_calls} | "
+              "your requirement text and the generated code are sent to the API")
+    elif requirement:
+        print("NOTE: the mock agents return stored artifacts and ignore the requirement text. Use --llm anthropic "
+              "to see it drive the output.")
+    if a.record:
+        llm = RecordingLLM(llm, a.record)
     approver = (approvals.cli_approver if a.approve == "ask" else approvals.auto_approver if a.approve == "auto"
                 else approvals.deny_approver(*a.approve.split(":")[1:]))
 
@@ -118,7 +165,7 @@ def main(argv=None) -> int:
         except ValueError:
             p.error("expected ID=VALUE")
 
-    extra = {}
+    extra = {"requirement": requirement} if requirement else {}
     if "asker" in inspect.signature(wf.build).parameters:       # workflows that ask clarifying questions
         extra["asker"] = approvals.layered_asker(approvals.dict_asker(pairs(a.answer)),
                                                  approvals.cli_asker if a.approve == "ask" else approvals.no_asker)
@@ -136,12 +183,15 @@ def main(argv=None) -> int:
     graph, agents = wf.build(llm, **extra)
     try:
         res = run_workflow(graph, agents, approver, run_root=a.run_root, revisions=revisions, edits=edits,
-                           on_replan=break_developers, assets=getattr(wf, "ASSETS", None),
+                           on_replan=break_developers, assets=getattr(wf, "ASSETS", None), llm=llm,
                            backoff_base_s=a.backoff, max_replans=a.max_replans)
     except GovernanceError as exc:
         print(f"\nWORKFLOW REJECTED BY GOVERNANCE LINT:\n  " + "\n  ".join(str(v) for v in exc.violations))
         return 2
     print(f"\nStatus: {res['status'].value} | run dir: {res['run_dir']}")
+    if real:
+        u = llm.usage
+        print(f"LLM usage: {u['calls']} call(s), {u['input_tokens']} input tokens, {u['output_tokens']} output tokens")
     print((res["run_dir"] / "report.md").read_text(encoding="utf-8"))
     for rev in res["revisions"]:
         print("REVISION:", f"redid {len(rev.affected)} node(s): {', '.join(sorted(rev.affected))}" if rev.changed

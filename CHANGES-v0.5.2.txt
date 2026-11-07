@@ -1,0 +1,24 @@
+PATCH v0.5.1 -> v0.5.2: stopping a service stops its whole process tree (Windows fix)
+
+APPLY (your project must be at v0.5.1): extract into the PARENT of your 'agent-orchestrator' folder and allow overwrite
+(or copy the zip's 'agent-orchestrator' folder contents into your repo). Then:  python -m pytest -v   -> expect NO failures
+(358 passed with Node.js and langgraph installed; otherwise the Node-based tests and/or the langgraph test show as skipped)
+
+git status afterwards should show exactly 0 new files and 9 modified files.
+
+NEW (0):
+  (none)
+
+MODIFIED (9):
+  ~ CHANGELOG.md
+  ~ README.md
+  ~ docs/admin-page.md
+  ~ docs/ai-usage-log.md
+  ~ docs/decisions/008-launching-generated-services.md
+  ~ orchestrator/admin/service.py
+  ~ tests/test_admin_service.py
+  ~ tests/test_ambiguous.py
+  ~ tests/test_ui.py
+
+DELETE BY HAND (0):
+  (none)

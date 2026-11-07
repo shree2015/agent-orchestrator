@@ -283,7 +283,7 @@ class Engine:
 
         # 2. primary agent with bounded retries + backoff (exit gates are part of "success")
         used = node.agent
-        output, last_error, aborted = self._run_agent(node, node.agent, ctx, node.max_retries + 1, "primary")
+        output, last_error, aborted, last_output = self._run_agent(node, node.agent, ctx, node.max_retries + 1, "primary")
         if aborted:
             return
 
@@ -292,8 +292,8 @@ class Engine:
             self._audit("fallback_engaged", node=node.id, fallback_agent=node.fallback_agent,
                         primary_error=last_error)
             used = node.fallback_agent
-            output, last_error, aborted = self._run_agent(
-                node, node.fallback_agent, ctx, node.fallback_attempts, "fallback")
+            output, last_error, aborted, last_output = self._run_agent(
+                node, node.fallback_agent, ctx, node.fallback_attempts, "fallback", last_error, last_output)
             if aborted:
                 return
         if last_error:
@@ -318,24 +318,29 @@ class Engine:
         self._audit("node_committed", node=node.id, agent=used, fallback=used != node.agent)
         self._set(node.id, NodeState.DONE)
 
-    def _run_agent(self, node: Node, agent_key: str, ctx: Mapping[str, Any],
-                   max_attempts: int, stage: str) -> tuple[Any, str, bool]:
-        """Run one agent up to max_attempts times. Returns (output, error, aborted).
+    def _run_agent(self, node: Node, agent_key: str, ctx: Mapping[str, Any], max_attempts: int, stage: str,
+                   error: str = "", previous: Any = None) -> tuple[Any, str, bool, Any]:
+        """Run one agent up to max_attempts times. Returns (output, error, aborted, previous_output).
 
-        error == "" means success. aborted=True means the global budget safe-stopped the run.
+        error == "" means success. aborted=True means the global budget safe-stopped the run. `error`/`previous`
+        seed the feedback for the first attempt, so a fallback agent learns why the primary failed.
         """
-        error = ""
         for i in range(1, max_attempts + 1):
             if not self._consume_budget(node):
-                return None, "attempt budget exceeded", True
+                return None, "attempt budget exceeded", True, previous
             self.attempts[node.id] += 1
             n = self.attempts[node.id]
+            # On a retry the agent is told WHY it was rejected (a real model would otherwise repeat the mistake).
+            # Only the agent sees this; gates always judge against the real, committed context.
+            agent_ctx = ctx if not error else MappingProxyType(
+                {**ctx, "__feedback__": {"content": error, "previous": previous, "role": "gate", "derived_from": []}})
             try:
-                output = self.agents[agent_key](ctx)
+                output = self.agents[agent_key](agent_ctx)
+                previous = output.get("content") if isinstance(output, dict) else output
                 bad = [why for ok, why in (g(ctx, output) for g in node.exit_gates) if not ok]
                 self._audit("exit_gates", node=node.id, attempt=n, agent=agent_key, failures=bad)
                 if not bad:
-                    return output, "", False
+                    return output, "", False, previous
                 error = "; ".join(bad)
             except Exception as exc:  # agent crashed
                 error = f"{type(exc).__name__}: {exc}"
@@ -345,7 +350,7 @@ class Engine:
                         error=error, will_retry=will_retry, backoff_s=delay)
             if delay > 0:
                 self._sleep(delay)
-        return None, error, False
+        return None, error, False, previous
 
     def _rollback(self) -> None:
         """Revert the whole failed change set to the checkpoint taken at invalidate()."""
@@ -378,6 +383,10 @@ class Engine:
         self._set(node.id, NodeState.FAILED)
         self._audit("node_failed", node=node.id, reason=reason)
         self._safe_stop(f"{node.id}: {reason}")
+
+    def stop(self, reason: str = "stopped by the operator") -> None:
+        """Ask the run to safe-stop: no new node starts; work already in flight finishes. The FIRST reason wins."""
+        self._safe_stop(reason)
 
     def _safe_stop(self, reason: str) -> None:
         if not self._halt.is_set():

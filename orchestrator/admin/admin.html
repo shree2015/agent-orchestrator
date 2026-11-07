@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Orchestrator - Admin</title>
+<style>
+:root {
+  --bg: #f4f6f9; --card: #ffffff; --text: #1b1f24; --muted: #5b6573; --line: #d9dee5; --accent: #2557d6; --accent-text: #ffffff;
+  --ok: #1a7f37; --warn: #9a6700; --bad: #b3261e; --focus: #ffb400; --soft: #eef2f8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151a; --card: #1b2027; --text: #e8ebf0; --muted: #9aa5b4; --line: #2e3640; --accent: #6c93ff; --accent-text: #0b1020;
+    --ok: #5ed17f; --warn: #e3b341; --bad: #ff8a80; --focus: #ffd166; --soft: #232a33;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 20px 16px 64px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 1.4rem; margin: 0; }
+h2 { font-size: 1.1rem; margin: 0 0 10px; }
+h3 { font-size: 0.95rem; margin: 18px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+h4 { margin: 0 0 6px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 16px; }
+.pill { font-size: 0.8rem; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.ok { color: var(--ok); border-color: var(--ok); }
+.pill.warn { color: var(--warn); border-color: var(--warn); }
+label { display: block; font-weight: 600; margin: 10px 0 4px; }
+label.inline { display: inline-block; font-weight: 400; margin: 0 0 0 6px; }
+input[type="text"], input[type="number"], input[type="password"], select, textarea {
+  width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+textarea { min-height: 220px; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 0.9rem; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 12px 0 0; padding: 8px 12px; }
+legend { color: var(--muted); font-size: 0.85rem; padding: 0 6px; }
+button { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--bad); border-color: var(--bad); }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+.muted { color: var(--muted); font-size: 0.9rem; }
+.status { min-height: 1.4em; margin-top: 8px; font-weight: 600; }
+.status.error { color: var(--bad); }
+.status.ok { color: var(--ok); }
+.banner { padding: 10px 12px; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); font-weight: 600; }
+.banner.completed { border-color: var(--ok); color: var(--ok); }
+.banner.halted, .banner.error, .banner.stopped { border-color: var(--bad); color: var(--bad); }
+.banner.waiting { border-color: var(--warn); color: var(--warn); }
+.note { margin-top: 8px; padding: 8px 10px; border-left: 4px solid var(--warn); background: var(--soft); }
+ul.plain, ol.plain { list-style: none; margin: 0; padding: 0; }
+.node { display: grid; grid-template-columns: 130px 1fr; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+.node:first-child { border-top: 0; }
+.badge { font-size: 0.75rem; font-weight: 700; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); text-align: center; align-self: start; }
+.badge.done { color: var(--ok); border-color: var(--ok); }
+.badge.running, .badge.awaiting_approval { color: var(--accent); border-color: var(--accent); }
+.badge.failed, .badge.rejected, .badge.rolled_back { color: var(--bad); border-color: var(--bad); }
+.badge.skipped, .badge.pending, .badge.stale { color: var(--muted); }
+.timeline { max-height: 260px; overflow: auto; font-size: 0.85rem; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+.timeline li { padding: 2px 0; }
+pre { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow: auto; max-height: 320px; white-space: pre-wrap; word-break: break-word; font-size: 0.82rem; margin: 6px 0 0; }
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.pending-card { border: 2px solid var(--warn); border-radius: 10px; padding: 12px; margin-top: 10px; background: var(--soft); }
+.opt { display: block; margin: 4px 0; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Agent Orchestrator - Admin</h1>
+    <span id="key-chip" class="pill" role="status">API key: checking...</span>
+  </header>
+  <p class="muted">Local control panel (this computer only). Write a requirement, choose mock or real agents, and generate. Approvals and questions appear here.</p>
+
+  <section class="card" aria-labelledby="new-title">
+    <h2 id="new-title">New run</h2>
+    <form id="run-form" novalidate>
+      <label for="scenario">What to build</label>
+      <select id="scenario"></select>
+      <p id="scenario-desc" class="muted"></p>
+
+      <label for="requirement">Requirement (plain English)</label>
+      <textarea id="requirement" spellcheck="true"></textarea>
+      <div class="row">
+        <button id="load-template" type="button">Load template</button>
+        <span id="req-count" class="muted"></span>
+      </div>
+
+      <fieldset>
+        <legend>Agents</legend>
+        <input type="radio" id="mode-mock" name="mode" value="mock" checked>
+        <label class="inline" for="mode-mock">Mock (offline, free, uses stored artifacts)</label><br>
+        <input type="radio" id="mode-real" name="mode" value="real">
+        <label class="inline" for="mode-real">Real model (Anthropic API, costs money)</label>
+      </fieldset>
+
+      <div id="real-box" class="card" hidden>
+        <div class="grid">
+          <div>
+            <label for="model">Model</label>
+            <input type="text" id="model" autocomplete="off">
+          </div>
+          <div>
+            <label for="max-calls">Call budget (hard limit)</label>
+            <input type="number" id="max-calls" min="1" max="200" value="40">
+          </div>
+        </div>
+        <p id="key-line" class="muted"></p>
+        <label for="api-key">Paste an API key (kept in this program's memory only; never saved or shown again)</label>
+        <input type="password" id="api-key" autocomplete="off" placeholder="sk-ant-...">
+        <div class="row">
+          <button id="save-key" type="button">Use this key</button>
+          <button id="clear-key" type="button">Clear key</button>
+        </div>
+        <details>
+          <summary>Advanced</summary>
+          <label for="roles">Only these roles use the real model (comma separated; empty = all)</label>
+          <input type="text" id="roles" autocomplete="off" placeholder="e.g. architect,doc_writer,reviewer">
+          <div class="row">
+            <input type="checkbox" id="record" checked>
+            <label class="inline" for="record">Record every prompt and response with the run (kept locally)</label>
+          </div>
+        </details>
+        <div class="row">
+          <input type="checkbox" id="confirm-real">
+          <label class="inline" id="confirm-label" for="confirm-real">I understand my requirement and the generated code will be sent to the Anthropic API and this can cost money.</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <input type="checkbox" id="auto-approve">
+        <label class="inline" for="auto-approve">Auto-approve design and release (demo). High-risk questions still need you.</label>
+      </div>
+      <div class="row">
+        <button id="start" class="primary" type="submit">Generate</button>
+        <span id="start-hint" class="muted"></span>
+      </div>
+      <div id="form-status" class="status" role="status" aria-live="polite"></div>
+    </form>
+  </section>
+
+  <section id="run-section" class="card" hidden aria-labelledby="run-title">
+    <h2 id="run-title">Current run</h2>
+    <div id="run-banner" class="banner"></div>
+    <div class="row"><button id="stop" class="danger" type="button" hidden>Stop (safe-stop)</button></div>
+    <div id="notes"></div>
+    <div id="pending-wrap">
+      <h3>Waiting for you</h3>
+      <div id="pending"><span class="muted">Nothing needs your attention.</span></div>
+    </div>
+    <h3>Steps</h3>
+    <ul id="nodes" class="plain"></ul>
+    <h3>Activity</h3>
+    <ol id="timeline" class="plain timeline"></ol>
+    <h3>Numbers</h3>
+    <table><tbody id="metrics"></tbody></table>
+    <p id="usage" class="muted"></p>
+  </section>
+
+  <section id="results-section" class="card" hidden aria-labelledby="results-title">
+    <h2 id="results-title">Results</h2>
+    <ul id="artifacts" class="plain"></ul>
+    <div class="row">
+      <a id="download" href="#">Download everything (zip)</a>
+      <button id="show-report" type="button">Show report</button>
+      <button id="audit-check" type="button">Check the audit trail</button>
+      <span id="audit-result" class="muted"></span>
+    </div>
+    <div id="service-box" hidden>
+      <h3>Run the generated service</h3>
+      <p id="service-text" class="muted"></p>
+      <div id="service-confirm-row" class="row" hidden>
+        <input type="checkbox" id="confirm-service">
+        <label class="inline" for="confirm-service">I understand this code was not produced by the reviewed mock agents (a real model wrote it, or its origin is unknown). It will run on my computer with my normal permissions.</label>
+      </div>
+      <div class="row">
+        <button id="start-service" type="button" class="primary">Start this service</button>
+        <button id="stop-service" type="button" class="danger" hidden>Stop service</button>
+        <a id="service-link" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
+      </div>
+      <div id="service-status" class="status" role="status" aria-live="polite"></div>
+    </div>
+    <pre id="artifact-view" hidden></pre>
+    <div id="revise" hidden>
+      <h3>Change an answer</h3>
+      <p class="muted">Pick a decision and a new answer. Only the work that depends on it is redone.</p>
+      <label for="revise-decision">Decision</label>
+      <select id="revise-decision"></select>
+      <label for="revise-value">New answer</label>
+      <select id="revise-value"></select>
+      <div class="row"><button id="revise-apply" type="button">Apply and re-plan</button></div>
+      <p id="revise-result" class="status" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="history-title">
+    <h2 id="history-title">Earlier runs</h2>
+    <div class="row"><button id="refresh-history" type="button">Refresh</button></div>
+    <table>
+      <thead><tr><th>Run</th><th>What</th><th>Agents</th><th>Result</th><th>Model calls</th><th></th></tr></thead>
+      <tbody id="history"></tbody>
+    </table>
+    <p id="history-empty" class="muted">No runs yet.</p>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var S = { token: '', config: null, snapshot: null, timer: null, dirty: false, resultsFor: null, pendingSig: '', artSig: '', reviseSig: '',
+            service: null, serviceTimer: null, runnable: false, resultsMode: 'unknown' };
+  var $ = function (id) { return document.getElementById(id); };
+  var STATUS_TEXT = { starting: 'Starting...', running: 'Running', waiting: 'Waiting for you', completed: 'Completed', halted: 'Halted (safe-stop)',
+                      stopped: 'Stopped by you', error: 'Error' };
+  var KEY_TEXT = { none: 'not set', env: 'found in the environment', session: 'pasted (memory only)' };
+  var SHOWN_METRICS = [['llm_calls', 'model calls'], ['llm_input_tokens', 'input tokens'], ['llm_output_tokens', 'output tokens'],
+    ['retries', 'retries'], ['fallbacks', 'fallbacks'], ['rollbacks', 'rollbacks'], ['revisions', 'revisions'], ['nodes_replanned', 'nodes redone by re-plans'],
+    ['approvals_requested', 'approvals'], ['policy_gate_failures', 'policy blocks'], ['policy_violations', 'which policies'],
+    ['node_success_rate', 'steps completed'], ['mttr_s', 'mean seconds to recover'], ['end_to_end_latency_s', 'seconds, last run']];
+
+  function el(tag, text, cls) {
+    var node = document.createElement(tag);
+    if (text !== undefined) { node.textContent = text; }
+    if (cls) { node.className = cls; }
+    return node;
+  }
+  function say(id, text, kind) {
+    var node = $(id);
+    node.textContent = text;
+    node.className = 'status' + (kind ? ' ' + kind : '');
+  }
+  function api(method, path, body) {
+    var options = { method: method, headers: {} };
+    if (S.token) { options.headers['X-Admin-Token'] = S.token; }
+    if (body !== undefined) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
+    return fetch(path, options).then(function (res) {
+      return res.text().then(function (text) {
+        var data = null;
+        if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
+        if (!res.ok) {
+          var err = new Error(data && data.error ? data.error.message : 'Request failed (' + res.status + ')');
+          err.status = res.status;
+          throw err;
+        }
+        return data;
+      });
+    });
+  }
+  function clear(node) { node.textContent = ''; }
+  function isReal() { return $('mode-real').checked; }
+  function busy() { return Boolean(S.snapshot && S.snapshot.run && S.snapshot.run.busy); }
+
+  // ------------------------------------------------------------------ configuration and the new-run form
+  function renderKey() {
+    var status = S.config.key_status;
+    var chip = $('key-chip');
+    chip.textContent = 'API key: ' + KEY_TEXT[status];
+    chip.className = 'pill' + (status === 'none' ? ' warn' : ' ok');
+    $('key-line').textContent = status === 'none'
+      ? 'No API key available. Paste one below, or set ANTHROPIC_API_KEY in the terminal that started this page.'
+      : 'An API key is available (' + KEY_TEXT[status] + '). The page never shows it.';
+    updateStart();
+  }
+  function renderScenario() {
+    var sc = S.config.scenarios.filter(function (s) { return s.id === $('scenario').value; })[0];
+    if (!sc) { return; }
+    $('scenario-desc').textContent = sc.description;
+    $('load-template').textContent = sc.has_template ? 'Load template' : 'Load default requirement';
+    if (!S.dirty) { $('requirement').value = sc.default_requirement; countReq(); }
+  }
+  function countReq() {
+    var n = $('requirement').value.length;
+    $('req-count').textContent = n + ' / ' + S.config.limits.requirement_chars + ' characters';
+  }
+  function updateStart() {
+    if (!S.config) { return; }
+    var reason = '';
+    if (busy()) { reason = 'A run is in progress.'; }
+    else if (isReal() && S.config.key_status === 'none') { reason = 'Real mode needs an API key.'; }
+    else if (isReal() && !$('confirm-real').checked) { reason = 'Tick the confirmation to use the real model.'; }
+    $('start').disabled = Boolean(reason);
+    $('start-hint').textContent = reason;
+  }
+  function renderMode() {
+    $('real-box').hidden = !isReal();
+    $('confirm-label').textContent = 'I understand my requirement and the generated code will be sent to the Anthropic API and this can cost money (at most '
+      + ($('max-calls').value || '?') + ' model calls).';
+    updateStart();
+  }
+  function startBody() {
+    var body = { scenario: $('scenario').value, requirement: $('requirement').value, mode: isReal() ? 'real' : 'mock',
+                 auto_approve: $('auto-approve').checked };
+    if (isReal()) {
+      body.confirm_real = $('confirm-real').checked;
+      body.model = $('model').value.trim() || undefined;
+      body.max_calls = Number($('max-calls').value);
+      body.record = $('record').checked;
+      var roles = $('roles').value.split(',').map(function (r) { return r.trim(); }).filter(Boolean);
+      if (roles.length) { body.roles = roles; }
+    }
+    return body;
+  }
+
+  // ----------------------------------------------------------------------------------- the live run view
+  function renderNodes(nodes) {
+    var list = $('nodes');
+    clear(list);
+    nodes.forEach(function (n) {
+      var li = el('li', undefined, 'node');
+      li.appendChild(el('span', n.state.replace('_', ' '), 'badge ' + n.state.toLowerCase()));
+      var info = el('div');
+      var bits = [n.id];
+      if (n.attempts) { bits.push('attempt' + (n.attempts > 1 ? 's: ' + n.attempts : ': 1')); }
+      if (n.producer) { bits.push('by ' + n.producer); }
+      if (n.approval) { bits.push('needs your approval'); }
+      info.appendChild(el('strong', bits[0]));
+      info.appendChild(el('span', bits.length > 1 ? '  ' + bits.slice(1).join(' - ') : '', 'muted'));
+      if (n.depends_on.length) { info.appendChild(el('div', 'after: ' + n.depends_on.join(', '), 'muted')); }
+      if (n.last_error) { info.appendChild(el('div', 'last problem: ' + n.last_error, 'muted')); }
+      li.appendChild(info);
+      list.appendChild(li);
+    });
+  }
+  function renderTimeline(items) {
+    var list = $('timeline');
+    var stick = list.scrollTop + list.clientHeight >= list.scrollHeight - 4;
+    clear(list);
+    items.forEach(function (t) { list.appendChild(el('li', t.text)); });
+    if (stick) { list.scrollTop = list.scrollHeight; }
+  }
+  function renderMetrics(m) {
+    var body = $('metrics');
+    clear(body);
+    SHOWN_METRICS.forEach(function (pair) {
+      var v = m[pair[0]];
+      if (v === undefined || v === null || v === 0 || (typeof v === 'object' && !Object.keys(v).length)) { return; }
+      if (typeof v === 'object') { v = Object.keys(v).map(function (k) { return k + ': ' + v[k]; }).join(', '); }
+      var tr = el('tr');
+      tr.appendChild(el('th', pair[1]));
+      tr.appendChild(el('td', String(v)));
+      body.appendChild(tr);
+    });
+  }
+  function decide(id, body) {
+    return api('POST', '/api/runs/current/decisions/' + encodeURIComponent(id), body).then(poll).catch(function (err) {
+      say('form-status', err.message, 'error');
+      poll();
+    });
+  }
+  function renderPending(items) {
+    var sig = items.map(function (p) { return p.id; }).join(',');
+    if (sig === S.pendingSig) { return; }          // do not rebuild while the person is choosing an answer
+    S.pendingSig = sig;
+    var box = $('pending');
+    clear(box);
+    if (!items.length) { box.appendChild(el('span', 'Nothing needs your attention.', 'muted')); return; }
+    items.forEach(function (p) {
+      var card = el('div', undefined, 'pending-card');
+      if (p.kind === 'approval') {
+        card.appendChild(el('h4', p.title));
+        if (p.description) { card.appendChild(el('div', p.description, 'muted')); }
+        card.appendChild(el('pre', p.content));
+        if (p.truncated) { card.appendChild(el('div', 'Showing the first part only (' + p.size + ' characters in total).', 'muted')); }
+        var row = el('div', undefined, 'row');
+        var yes = el('button', 'Approve', 'primary');
+        yes.type = 'button';
+        yes.addEventListener('click', function () { decide(p.id, { approve: true }); });
+        var no = el('button', 'Reject (stops the run)', 'danger');
+        no.type = 'button';
+        no.addEventListener('click', function () { decide(p.id, { approve: false }); });
+        row.appendChild(yes);
+        row.appendChild(no);
+        card.appendChild(row);
+      } else {
+        card.appendChild(el('h4', 'Question (' + p.risk + ' risk)'));
+        card.appendChild(el('div', p.question));
+        card.appendChild(el('div', p.why || '', 'muted'));
+        var radios = [];
+        (p.options || []).forEach(function (opt) {
+          var label = el('label', undefined, 'opt');
+          var input = el('input');
+          input.type = 'radio';
+          input.name = 'q-' + p.id;
+          input.value = String(opt);
+          input.checked = p.risk !== 'high' && String(opt) === String(p.proposed);
+          radios.push(input);
+          label.appendChild(input);
+          label.appendChild(el('span', ' ' + opt + (String(opt) === String(p.proposed) ? '  (proposed)' : '')));
+          card.appendChild(label);
+        });
+        var qrow = el('div', undefined, 'row');
+        var send = el('button', 'Submit my answer', 'primary');
+        send.type = 'button';
+        send.addEventListener('click', function () {
+          var chosen = radios.filter(function (r) { return r.checked; })[0];
+          if (!chosen) { say('form-status', 'Choose an answer first.', 'error'); return; }
+          decide(p.id, { answer: chosen.value });
+        });
+        qrow.appendChild(send);
+        if (p.risk !== 'high') {
+          var assume = el('button', 'Use the proposed default');
+          assume.type = 'button';
+          assume.addEventListener('click', function () { decide(p.id, { skip: true }); });
+          qrow.appendChild(assume);
+        } else {
+          qrow.appendChild(el('span', 'High risk: only you can answer this.', 'muted'));
+        }
+        card.appendChild(qrow);
+      }
+      box.appendChild(card);
+    });
+  }
+
+  // ----------------------------------------------------------------------- results, revising an answer, history
+  function showArtifact(runId, name) {
+    return api('GET', '/api/runs/' + encodeURIComponent(runId) + '/artifacts/' + encodeURIComponent(name)).then(function (a) {
+      var view = $('artifact-view');
+      view.hidden = false;
+      view.textContent = a.name + ' (' + a.size + ' bytes' + (a.truncated ? ', shortened' : '') + ')\n\n' + a.content;
+    }).catch(function (err) { say('form-status', err.message, 'error'); });
+  }
+  // ---- running the generated service (only offered when the run produced one)
+  function renderServiceBox() {
+    var box = $('service-box');
+    box.hidden = !S.runnable;
+    if (!S.runnable) { return; }
+    var st = S.service || { running: false };
+    var mine = st.running && st.run_id === S.resultsFor;
+    var other = st.running && st.run_id !== S.resultsFor;
+    var needsConfirm = S.resultsMode !== 'mock';
+    $('service-confirm-row').hidden = !needsConfirm || st.running;
+    var link = $('service-link');
+    link.hidden = !mine;
+    if (mine) { link.href = st.url; link.textContent = st.url; }
+    $('start-service').hidden = st.running;
+    $('stop-service').hidden = !st.running;
+    $('start-service').disabled = needsConfirm && !$('confirm-service').checked;
+    var text = 'Not running. Starting it runs the generated code on this computer, reachable only from this computer.';
+    if (mine) { text = 'Running on this computer only (port ' + st.port + ', started ' + st.started_at + '). Open the link, and stop it when you are done.'; }
+    else if (other) { text = 'Another service (' + st.run_id + ') is running. Stop it before starting this one.'; }
+    else if (st.last_exit && st.last_exit.run_id === S.resultsFor) { text = 'The service stopped on its own (exit code ' + st.last_exit.exit_code + ').'; }
+    $('service-text').textContent = text;
+  }
+  function refreshService() {
+    clearTimeout(S.serviceTimer);
+    return api('GET', '/api/service').then(function (st) {
+      S.service = st;
+      renderServiceBox();
+      if (st.running) { S.serviceTimer = setTimeout(refreshService, 3000); }
+    }).catch(function (err) { say('service-status', err.message, 'error'); });
+  }
+
+  function renderResults(runId, artifacts, title, info) {
+    var sig = runId + '|' + artifacts.join(',');
+    S.runnable = Boolean(info && info.runnable);
+    S.resultsMode = (info && info.mode) || 'unknown';
+    $('results-section').hidden = false;
+    $('results-title').textContent = title || ('Results of ' + runId);
+    $('download').href = '/api/runs/' + encodeURIComponent(runId) + '/download';
+    if (sig === S.artSig) { renderServiceBox(); return; }
+    S.artSig = sig;
+    S.resultsFor = runId;
+    say('service-status', '');
+    renderServiceBox();
+    refreshService();
+    $('audit-result').textContent = '';
+    $('artifact-view').hidden = true;
+    var list = $('artifacts');
+    clear(list);
+    artifacts.forEach(function (name) {
+      var li = el('li');
+      var b = el('button', name);
+      b.type = 'button';
+      b.addEventListener('click', function () { showArtifact(runId, name); });
+      li.appendChild(b);
+      list.appendChild(li);
+    });
+  }
+  function renderRevise(decisions) {
+    var box = $('revise');
+    box.hidden = !decisions.length;
+    if (!decisions.length) { S.reviseSig = ''; return; }
+    var sig = JSON.stringify(decisions);
+    if (sig === S.reviseSig) { return; }
+    S.reviseSig = sig;
+    var pick = $('revise-decision');
+    clear(pick);
+    decisions.forEach(function (d) {
+      var o = el('option', d.id + ': now ' + d.answer + ' (' + d.decided_by + ')');
+      o.value = d.id;
+      pick.appendChild(o);
+    });
+    fillValues(decisions);
+    pick.onchange = function () { fillValues(decisions); };
+  }
+  function fillValues(decisions) {
+    var d = decisions.filter(function (x) { return x.id === $('revise-decision').value; })[0] || decisions[0];
+    var sel = $('revise-value');
+    clear(sel);
+    (d ? d.options : []).forEach(function (opt) {
+      var o = el('option', String(opt));
+      o.value = String(opt);
+      sel.appendChild(o);
+    });
+  }
+  function loadHistory() {
+    return api('GET', '/api/runs').then(function (res) {
+      var body = $('history');
+      clear(body);
+      $('history-empty').hidden = res.runs.length > 0;
+      res.runs.forEach(function (r) {
+        var tr = el('tr');
+        [r.run_id, r.scenario, r.mode, r.status, String(r.llm_calls)].forEach(function (t) { tr.appendChild(el('td', t)); });
+        var td = el('td');
+        var open = el('button', 'Open');
+        open.type = 'button';
+        open.addEventListener('click', function () {
+          api('GET', '/api/runs/' + encodeURIComponent(r.run_id)).then(function (d) {
+            S.artSig = '';
+            $('revise').hidden = true;
+            renderResults(r.run_id, d.artifacts, 'Results of ' + r.run_id + ' (' + r.status + ')', { runnable: d.runnable, mode: d.mode });
+          }).catch(function (err) { say('form-status', err.message, 'error'); });
+        });
+        td.appendChild(open);
+        tr.appendChild(td);
+        body.appendChild(tr);
+      });
+    }).catch(function (err) { say('form-status', err.message, 'error'); });
+  }
+
+  // ------------------------------------------------------------------------------------------- polling
+  function renderSnapshot(snap) {
+    S.snapshot = snap;
+    $('run-section').hidden = !snap.run;
+    updateStart();
+    if (!snap.run) { return; }
+    var r = snap.run;
+    var banner = $('run-banner');
+    banner.className = 'banner ' + r.status;
+    banner.textContent = (STATUS_TEXT[r.status] || r.status) + '  -  ' + r.id + '  -  ' + (r.mode === 'real' ? 'real model ' + (r.model || '') : 'mock agents')
+      + (r.halt_reason ? '  -  ' + r.halt_reason : '') + (r.error ? '  -  ' + r.error : '');
+    $('stop').hidden = !r.busy;
+    var notes = $('notes');
+    clear(notes);
+    snap.notes.forEach(function (t) { notes.appendChild(el('div', t, 'note')); });
+    renderNodes(snap.nodes);
+    renderTimeline(snap.timeline);
+    renderMetrics(snap.metrics);
+    renderPending(snap.pending);
+    var u = snap.llm_usage;
+    $('usage').textContent = u ? 'Model usage: ' + u.calls + ' call(s), ' + u.input_tokens + ' input tokens, ' + u.output_tokens + ' output tokens' : '';
+    if (!r.busy && snap.artifacts.length) {
+      renderResults(r.id, snap.artifacts, 'Results of ' + r.id, { runnable: r.runnable, mode: r.mode });
+      renderRevise(snap.decisions);
+    } else if (r.busy) {
+      renderRevise([]);
+    }
+  }
+  function poll() {
+    clearTimeout(S.timer);
+    return api('GET', '/api/runs/current').then(function (snap) {
+      renderSnapshot(snap);
+      if (snap.run && snap.run.busy) { S.timer = setTimeout(poll, 700); } else { loadHistory(); }
+    }).catch(function (err) { say('form-status', err.message, 'error'); });
+  }
+
+  // ------------------------------------------------------------------------------------------- wiring
+  $('scenario').addEventListener('change', function () { S.dirty = false; renderScenario(); });
+  $('requirement').addEventListener('input', function () { S.dirty = true; countReq(); });
+  $('load-template').addEventListener('click', function () {
+    api('GET', '/api/template/' + encodeURIComponent($('scenario').value)).then(function (t) {
+      $('requirement').value = t.requirement;
+      S.dirty = false;
+      countReq();
+      say('form-status', 'Template loaded.', 'ok');
+    }).catch(function (err) { say('form-status', err.message, 'error'); });
+  });
+  $('mode-mock').addEventListener('change', renderMode);
+  $('mode-real').addEventListener('change', renderMode);
+  $('confirm-real').addEventListener('change', updateStart);
+  $('max-calls').addEventListener('input', renderMode);
+  $('save-key').addEventListener('click', function () {
+    var box = $('api-key');
+    api('POST', '/api/key', { key: box.value }).then(function (res) {
+      box.value = '';                                      // the page never keeps the key
+      S.config.key_status = res.key_status;
+      renderKey();
+      say('form-status', 'Key accepted for this session (held in memory only).', 'ok');
+    }).catch(function (err) { say('form-status', err.message, 'error'); });
+  });
+  $('clear-key').addEventListener('click', function () {
+    $('api-key').value = '';
+    api('DELETE', '/api/key').then(function (res) {
+      S.config.key_status = res.key_status;
+      renderKey();
+      say('form-status', 'Pasted key cleared.', 'ok');
+    }).catch(function (err) { say('form-status', err.message, 'error'); });
+  });
+  $('run-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    say('form-status', 'Starting...');
+    api('POST', '/api/runs', startBody()).then(function (res) {
+      say('form-status', 'Started ' + res.run_id + '.', 'ok');
+      S.pendingSig = '';
+      S.artSig = '';
+      $('results-section').hidden = true;
+      S.runnable = false;
+      S.snapshot = { run: { busy: true } };
+      updateStart();
+      poll();
+    }).catch(function (err) { say('form-status', err.message, 'error'); });
+  });
+  $('stop').addEventListener('click', function () {
+    api('POST', '/api/runs/current/stop', {}).then(poll).catch(function (err) { say('form-status', err.message, 'error'); });
+  });
+  $('show-report').addEventListener('click', function () {
+    if (!S.resultsFor) { return; }
+    api('GET', '/api/runs/' + encodeURIComponent(S.resultsFor)).then(function (d) {
+      var view = $('artifact-view');
+      view.hidden = false;
+      view.textContent = d.report || '(no report)';
+    }).catch(function (err) { say('form-status', err.message, 'error'); });
+  });
+  $('audit-check').addEventListener('click', function () {
+    if (!S.resultsFor) { return; }
+    api('GET', '/api/runs/' + encodeURIComponent(S.resultsFor) + '/audit-check').then(function (r) {
+      $('audit-result').textContent = r.intact ? 'Audit trail intact (' + r.events + ' events, hash chain verified).' : 'AUDIT TRAIL HAS BEEN TAMPERED WITH.';
+    }).catch(function (err) { say('form-status', err.message, 'error'); });
+  });
+  $('revise-apply').addEventListener('click', function () {
+    var body = { decision_id: $('revise-decision').value, value: $('revise-value').value };
+    api('POST', '/api/runs/current/revise', body).then(function (res) {
+      var text = !res.accepted ? 'Refused: ' + res.why
+        : res.changed ? 'Accepted. Redoing: ' + res.affected.join(', ') + '.' : 'Same answer as before: nothing to redo.';
+      say('revise-result', text, res.accepted ? 'ok' : 'error');
+      S.reviseSig = '';
+      S.snapshot = { run: { busy: Boolean(res.changed) } };
+      poll();
+    }).catch(function (err) { say('revise-result', err.message, 'error'); });
+  });
+  $('confirm-service').addEventListener('change', renderServiceBox);
+  $('start-service').addEventListener('click', function () {
+    say('service-status', 'Starting...');
+    api('POST', '/api/service', { run_id: S.resultsFor, confirm_unreviewed: $('confirm-service').checked }).then(function (st) {
+      S.service = st;
+      renderServiceBox();
+      say('service-status', 'Service started. It listens on this computer only.', 'ok');
+      refreshService();
+    }).catch(function (err) { say('service-status', err.message, 'error'); });
+  });
+  $('stop-service').addEventListener('click', function () {
+    api('DELETE', '/api/service').then(function (st) {
+      S.service = st;
+      clearTimeout(S.serviceTimer);
+      renderServiceBox();
+      say('service-status', 'Service stopped.', 'ok');
+    }).catch(function (err) { say('service-status', err.message, 'error'); });
+  });
+  $('refresh-history').addEventListener('click', loadHistory);
+
+  api('GET', '/api/config').then(function (cfg) {
+    S.config = cfg;
+    S.token = cfg.token;
+    var sel = $('scenario');
+    cfg.scenarios.forEach(function (s) {
+      var o = el('option', s.title);
+      o.value = s.id;
+      sel.appendChild(o);
+    });
+    $('model').value = cfg.default_model;
+    $('max-calls').value = String(cfg.limits.default_calls);
+    renderScenario();
+    renderKey();
+    renderMode();
+    poll();
+    loadHistory();
+  }).catch(function (err) { say('form-status', 'Cannot reach the admin server: ' + err.message, 'error'); });
+}());
+</script>
+</body>
+</html>
