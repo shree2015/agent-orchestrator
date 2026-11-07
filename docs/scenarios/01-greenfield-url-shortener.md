@@ -5,7 +5,7 @@ aliases, rate limiting and basic abuse protection. Ship tests and docs."
 
 ## 1. Decomposition (the dependency graph)
 ```
-requirements -> design* -> implementation -> tests  ->\
+requirements -> plan -> design* -> implementation -> tests  ->\
                                           -> docs   ->  review -> release*
                                           -> ui     ->/
 ```
@@ -16,13 +16,14 @@ the synchronisation point and waits for all three.
 | Node | Agent | Exit gate(s) that must pass before the output is committed |
 |---|---|---|
 | requirements | requirements | valid JSON with goal / functional / ambiguities / acceptance |
+| plan | planner | tasks acyclic, mapped to real stages, ordered as the workflow can execute, every acceptance criterion traced to tests or a gate |
 | design | architect | human approval |
 | implementation | developer (fallback: developer_fallback) | valid Python; security policies; public API documented; change-control limits |
-| tests | tester | valid Python; **tests pass against the implementation in a sandbox**; at least 3 tests |
+| tests | tester | valid Python; **tests pass against the implementation in a sandbox**; at least 3 tests; every test the plan promised exists |
 | docs | doc_writer | docs mention every public function/class |
 | ui | frontend | HTML/JS security (no external resources, no innerHTML/eval, no inline handlers or styles, CSP-compatible blocks); documented API used; accessibility basics; change-control limits |
 | review | reviewer | must start with APPROVE |
-| release | release_manager | **entry gate** re-verifies all evidence (including the UI); then human approval |
+| release | release_manager | **entry gate** re-verifies all evidence (including the UI and the plan); then human approval |
 
 ## 2. Orchestration behaviours to show
 Run each and open `runs/<id>/report.md` (nodes, governance timeline, lineage, metrics):

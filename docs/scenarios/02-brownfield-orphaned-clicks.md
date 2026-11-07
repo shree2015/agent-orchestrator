@@ -10,6 +10,9 @@ python -m orchestrator.cli run brownfield --approve auto
 python -m orchestrator.cli run brownfield --approve auto --violate scope-creep
 ```
 
+The run's `artifacts` folder also carries over the existing `ui.html` unchanged, so the patched service can be started
+right away with its web UI.
+
 ## 1. Codebase reasoning (what the analysis found)
 | | |
 |---|---|

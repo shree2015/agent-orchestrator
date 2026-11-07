@@ -105,6 +105,17 @@ class Graph:
                     stack.append(child)
         return seen
 
+    def ancestors(self, node_id: str) -> set[str]:
+        """All transitive dependencies of node_id (everything whose output can influence it)."""
+        seen: set[str] = set()
+        stack = [node_id]
+        while stack:
+            for dep in self.nodes[stack.pop()].depends_on:
+                if dep not in seen:
+                    seen.add(dep)
+                    stack.append(dep)
+        return seen
+
     def parallel_layers(self) -> list[list[str]]:
         """Static view of what *could* run in parallel (useful for docs/diagrams)."""
         level: dict[str, int] = {}

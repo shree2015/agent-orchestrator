@@ -218,3 +218,18 @@ def test_cli_runs_brownfield_and_rejects_violations_from_other_workflows(tmp_pat
     assert cli.main(base + ["--revise-design", "fail"]) == 1
     with pytest.raises(SystemExit):
         cli.main(base + ["--violate", "ui-cdn"])                                  # a shortener-only violation
+
+
+def test_a_cli_run_carries_the_existing_web_ui_unchanged(tmp_path):
+    from orchestrator.workflows import shortener
+    assert cli.main(["run", "brownfield", "--approve", "auto", "--run-root", str(tmp_path)]) == 0
+    art = sorted(p for p in tmp_path.iterdir() if p.is_dir())[-1] / "artifacts"
+    assert (art / "ui.html").read_text(encoding="utf-8") == shortener.GOOD_UI
+
+
+def test_carried_over_files_never_overwrite_what_an_agent_produced(tmp_path):
+    graph, agents = bf.build(bf.make_llm())
+    r = run_workflow(graph, agents, approvals.auto_approver, run_root=tmp_path, run_id="as",
+                     assets={"design.md": "SHOULD NOT WIN", "extra.txt": "kept"})
+    art = r["run_dir"] / "artifacts"
+    assert (art / "design.md").read_text(encoding="utf-8") != "SHOULD NOT WIN" and (art / "extra.txt").read_text(encoding="utf-8") == "kept"

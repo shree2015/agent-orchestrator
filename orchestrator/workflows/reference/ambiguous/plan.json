@@ -1,0 +1,17 @@
+{
+  "summary": "Make the decided numbers explicit configuration first, then apply them where links are created; tests and the changelog follow in parallel and are reviewed together",
+  "tasks": [
+    {"id": "T1", "title": "Add default/maximum expiry configuration and an optional constructor parameter", "node": "implementation", "depends_on": []},
+    {"id": "T2", "title": "Apply the default expiry in shorten() and wire the decisions into serve()", "node": "implementation", "depends_on": ["T1"]},
+    {"id": "T3", "title": "Tests for default, override, maximum, alias rule and backward compatibility", "node": "tests", "depends_on": ["T2"]},
+    {"id": "T4", "title": "Changelog entry recording every decision and who made it", "node": "docs", "depends_on": ["T2"]},
+    {"id": "T5", "title": "Review decisions, code, tests and changelog together", "node": "review", "depends_on": ["T3", "T4"]}
+  ],
+  "traceability": [
+    {"criterion": "AC1", "tasks": ["T2", "T3"], "verified_by": {"tests": ["test_links_without_ttl_get_the_default_expiry", "test_default_ttl_links_expire"]}},
+    {"criterion": "AC2", "tasks": ["T2", "T3"], "verified_by": {"tests": ["test_explicit_ttl_overrides_the_default", "test_ttl_above_the_configured_maximum_is_rejected"]}},
+    {"criterion": "AC3", "tasks": ["T2", "T3"], "verified_by": {"tests": ["test_default_ttl_applies_to_aliases_as_decided"]}},
+    {"criterion": "AC4", "tasks": ["T1", "T3"], "verified_by": {"tests": ["test_service_without_a_default_ttl_still_creates_permanent_links", "test_same_url_is_idempotent_for_permanent_links"]}},
+    {"criterion": "AC5", "tasks": ["T3", "T4"], "verified_by": {"tests": ["test_decisions_are_reflected_in_the_code_constants"]}}
+  ]
+}

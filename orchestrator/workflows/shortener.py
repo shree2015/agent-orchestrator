@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..llm import mock_client as mc
+from . import plan_fixtures as pf
 from . import slugify
 
 _REF = Path(__file__).parent / "reference" / "shortener"
@@ -41,6 +42,7 @@ DEFAULTS = {
     "tester": read("tests.py.txt"),
     "doc_writer": read("docs.md"),
     "frontend": GOOD_UI,
+    "planner": read("plan.json"),
 }
 
 FIXTURES = {
@@ -64,11 +66,14 @@ VIOLATIONS = {
     "ui-innerhtml": ("frontend", FIXTURES["ui_innerhtml"], False),
     "ui-cdn": ("frontend", FIXTURES["ui_cdn"], False),
     "ui-unlabelled": ("frontend", FIXTURES["ui_unlabelled"], False),
+    "plan-cycle": ("planner", pf.plan_cycle(DEFAULTS["planner"]), False),
+    "plan-misses-criterion": ("planner", pf.plan_misses_criterion(DEFAULTS["planner"]), False),
+    "plan-wrong-order": ("planner", pf.plan_wrong_order(DEFAULTS["planner"]), False),
 }
 
 
 def build(llm, requirement: str = REQUIREMENT):
-    return slugify.build(llm, requirement, code_path=CODE_PATH, max_lines=MAX_LINES, ui=True)
+    return slugify.build(llm, requirement, code_path=CODE_PATH, max_lines=MAX_LINES, ui=True, plan=True)
 
 
 def make_llm(fail_times=None, scripted=None):

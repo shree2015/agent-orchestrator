@@ -8,6 +8,7 @@ from ..agents.llm_agent import llm_agent
 from ..core.graph import Graph, Node
 from ..governance import gates as g
 from ..governance.policies.compliance import RELEASE_EVIDENCE
+from ..governance.policies.planning import GraphRef
 from ..llm import mock_client as mc
 
 REQUIREMENT = "Write a Python function slugify(text) that turns arbitrary text into a URL-safe slug, with tests and docs."
@@ -35,13 +36,14 @@ def release_agent(ctx):
 
 
 def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", max_lines: int = 200,
-          ui: bool = False):
+          ui: bool = False, plan: bool = False):
+    ref = GraphRef()                   # lets plan/traceability gates look at the finished graph
     graph = (
         Graph()
         .add(Node("requirements", "requirements",
                   exit_gates=(g.json_has_keys("goal", "functional", "ambiguities", "acceptance"),),
                   description="Normalize intent, surface ambiguities"))
-        .add(Node("design", "architect", depends_on=("requirements",),
+        .add(Node("design", "architect", depends_on=("requirements", "plan") if plan else ("requirements",),
                   entry_gates=(g.require_inputs("requirements"),),
                   requires_approval=True, tags=("high_impact",), description="Design (human approval)"))
         .add(Node("implementation", "developer", depends_on=("design",),
@@ -51,7 +53,8 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
                               g.change_control_gate(code_path, max_lines=max_lines)),
                   description="Generate code; syntax + security + compliance + change-control gates"))
         .add(Node("tests", "tester", depends_on=("implementation",),
-                  exit_gates=(g.valid_python, g.tests_pass_against_implementation, g.tests_compliance),
+                  exit_gates=(g.valid_python, g.tests_pass_against_implementation, g.tests_compliance)
+                  + ((g.traceability_gate(ref),) if plan else ()),
                   description="Generate tests; must pass against the implementation in a sandbox"))
         .add(Node("docs", "doc_writer", depends_on=("implementation",),
                   exit_gates=(g.docs_compliance,),
@@ -60,10 +63,14 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
                   exit_gates=(g.reviewer_approves,),
                   description="Sync point: critic reviews all artifacts"))
         .add(Node("release", "release_manager", depends_on=("review",),
-                  entry_gates=(g.release_compliance_for(RELEASE_EVIDENCE + (("ui",) if ui else ())),),
+                  entry_gates=(g.release_compliance_for(RELEASE_EVIDENCE + (("ui",) if ui else ()) + (("plan",) if plan else ())),),
                   requires_approval=True, tags=("high_impact", "release"),
                   description="Release readiness: compliance evidence re-verified, then human approval"))
     )
+    if plan:  # decomposition: tasks with dependencies, mapped to workflow stages and traced to acceptance criteria
+        graph.add(Node("plan", "planner", depends_on=("requirements",), max_retries=2,
+                       exit_gates=(g.plan_gate(ref, ("implementation", "tests", "docs") + (("ui",) if ui else ())),),
+                       description="Decompose the requirement into tasks; plan must be coherent, executable and traceable"))
     if ui:  # a web UI is one more parallel branch: it only needs the implementation's API contract
         graph.add(Node("ui", "frontend", depends_on=("implementation",), max_retries=2, tags=("code",),
                        exit_gates=(g.ui_security, g.ui_compliance, g.change_control_gate("ui.html", max_lines=500)),
@@ -78,8 +85,11 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
         "reviewer": llm_agent(llm, "reviewer", "Reply APPROVE or REJECT with reasons.", ("implementation", "tests", "docs")),
         "release_manager": release_agent,
     }
+    if plan:
+        agents["planner"] = llm_agent(llm, "planner", "Decompose the requirement into JSON tasks (id, title, node, depends_on) plus acceptance-criterion traceability.", ("requirements",))
     if ui:
         agents["frontend"] = llm_agent(llm, "frontend", "Write ONE self-contained index.html (inline CSS and JS, no external resources) that calls the documented API.", ("requirements", "design", "implementation"))
+    ref.graph = graph
     return graph, agents
 
 
