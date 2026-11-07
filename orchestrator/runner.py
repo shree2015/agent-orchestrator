@@ -13,7 +13,7 @@ from .governance.policies.change_control import lint_graph
 from .observability import metrics as metrics_mod
 from .observability.audit_log import AuditLog
 
-EXT = {"implementation": "py", "tests": "py", "requirements": "json"}
+EXT = {"implementation": "py", "tests": "py", "requirements": "json", "ui": "html", "impact_analysis": "json"}
 
 
 # Events worth showing in the report's governance timeline.
@@ -49,12 +49,12 @@ def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id:
         status = engine.run()
 
     m = metrics_mod.compute(audit.events)
-    (run_dir / "metrics.json").write_text(json.dumps(m, indent=2))
+    (run_dir / "metrics.json").write_text(json.dumps(m, indent=2), encoding="utf-8")
     art = run_dir / "artifacts"
     art.mkdir(exist_ok=True)
     for node_id, out in engine.context.items():
-        (art / f"{node_id}.{EXT.get(node_id, 'md')}").write_text(out["content"])
-    (run_dir / "report.md").write_text(render_report(run_id, engine, m, audit))
+        (art / f"{node_id}.{EXT.get(node_id, 'md')}").write_text(out["content"], encoding="utf-8")
+    (run_dir / "report.md").write_text(render_report(run_id, engine, m, audit), encoding="utf-8")
     return {"run_id": run_id, "run_dir": run_dir, "status": status, "metrics": m, "engine": engine, "audit": audit}
 
 

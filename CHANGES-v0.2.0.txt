@@ -1,0 +1,57 @@
+PATCH v0.1.0 -> v0.2.0: web UI + brownfield scenario
+
+This zip contains ONLY new and changed files, with paths relative to the project folder 'agent-orchestrator'.
+
+APPLY (recommended, on a branch):
+  1. In your repo folder:   git checkout -b feature/ui-and-brownfield
+  2. Extract this zip into the PARENT folder of 'agent-orchestrator' and allow overwrite
+     (or copy the contents of the zip's 'agent-orchestrator' folder into your repo folder).
+  3. git status             -> expect 18 new files and 21 modified files, nothing else
+  4. python -m pytest -v    -> expect 193 passed (192 if langgraph is not installed; a UI test is skipped without Node.js 18+)
+  5. git add .  and commit, then merge into main and tag v0.2.0 (see the steps in the chat).
+
+NEW (18):
+  + docs/decisions/003-brownfield-declare-then-enforce.md
+  + docs/scenarios/02-brownfield-orphaned-clicks.md
+  + orchestrator/governance/codeintel.py
+  + orchestrator/workflows/brownfield.py
+  + orchestrator/workflows/reference/brownfield/baseline_shortener.py.txt
+  + orchestrator/workflows/reference/brownfield/baseline_tests.py.txt
+  + orchestrator/workflows/reference/brownfield/bug_report.md
+  + orchestrator/workflows/reference/brownfield/changelog.md
+  + orchestrator/workflows/reference/brownfield/design.md.txt
+  + orchestrator/workflows/reference/brownfield/fixed_shortener.py.txt
+  + orchestrator/workflows/reference/brownfield/fixed_tests.py.txt
+  + orchestrator/workflows/reference/brownfield/impact_analysis.json
+  + orchestrator/workflows/reference/brownfield/requirements.json
+  + orchestrator/workflows/reference/shortener/ui.html.txt
+  + tests/test_brownfield.py
+  + tests/test_codeintel.py
+  + tests/test_ui.py
+  + tests/ui_harness.js
+
+MODIFIED (21):
+  ~ CHANGELOG.md
+  ~ README.md
+  ~ docs/ai-usage-log.md
+  ~ docs/policies.md
+  ~ docs/scenarios/01-greenfield-url-shortener.md
+  ~ docs/testing.md
+  ~ orchestrator/cli.py
+  ~ orchestrator/governance/gates.py
+  ~ orchestrator/governance/policies/change_control.py
+  ~ orchestrator/governance/policies/compliance.py
+  ~ orchestrator/governance/policies/security.py
+  ~ orchestrator/observability/audit_log.py
+  ~ orchestrator/runner.py
+  ~ orchestrator/workflows/reference/shortener/design.md.txt
+  ~ orchestrator/workflows/reference/shortener/docs.md
+  ~ orchestrator/workflows/reference/shortener/requirements.json
+  ~ orchestrator/workflows/reference/shortener/shortener.py.txt
+  ~ orchestrator/workflows/reference/shortener/tests.py.txt
+  ~ orchestrator/workflows/shortener.py
+  ~ orchestrator/workflows/slugify.py
+  ~ scripts/run_shortener_tests.py
+
+DELETE BY HAND (0):
+  (none)

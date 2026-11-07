@@ -5,6 +5,8 @@ Run it with `python shortener.py [port]`; see the docs for the API.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import ipaddress
 import json
 import logging
@@ -16,6 +18,7 @@ import sys
 import threading
 import time
 from http import HTTPStatus
+from pathlib import Path
 from urllib.parse import urlsplit
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -24,6 +27,7 @@ MAX_URL_LENGTH = 2048
 MAX_BODY_BYTES = 4096
 ALIAS_RE = re.compile(r"[A-Za-z0-9_-]{3,32}")
 RESERVED_ALIASES = frozenset({"api", "healthz", "static", "admin"})
+_INLINE_BLOCK = {tag: re.compile(rf"<{tag}>(.*?)</{tag}>", re.S) for tag in ("script", "style")}
 _NUMERIC_HOST = re.compile(r"(0x[0-9a-f]+|\d+)(\.(0x[0-9a-f]+|\d+))*")
 log = logging.getLogger("shortener")
 
@@ -354,13 +358,27 @@ class ShortenerService:
 
 
 # -------------------------------------------------------------------------- HTTP (WSGI)
+def csp_for(html: str) -> str:
+    """Build a strict Content-Security-Policy that allows only this page's own inline script and style blocks.
+
+    Each block is allowed by its SHA-256 hash, so there is no 'unsafe-inline' and injected markup cannot run.
+    """
+    def allowed(tag: str) -> str:
+        digests = [base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode()
+                   for body in _INLINE_BLOCK[tag].findall(html)]
+        return " ".join(f"'sha256-{d}'" for d in digests) or "'none'"
+
+    return (f"default-src 'none'; script-src {allowed('script')}; style-src {allowed('style')}; "
+            "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+
+
 def _iso(ts: float | None) -> str | None:
     return None if ts is None else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
 
 
 def make_app(service: ShortenerService, limiter: RateLimiter | None = None,
-             base_url: str = "http://localhost:8000"):
-    """Return a WSGI application exposing the service over HTTP (JSON API plus redirects)."""
+             base_url: str = "http://localhost:8000", ui_html: str | None = None):
+    """Return a WSGI application exposing the service over HTTP (JSON API, redirects and an optional web UI)."""
     limiter = limiter or RateLimiter()
 
     def respond(start_response, status, body=None, headers=()):
@@ -369,6 +387,14 @@ def make_app(service: ShortenerService, limiter: RateLimiter | None = None,
         if payload:
             out_headers.append(("Content-Type", "application/json"))
         start_response(f"{status} {HTTPStatus(status).phrase}", out_headers)
+        return [payload]
+
+    def respond_ui(start_response):
+        payload = ui_html.encode("utf-8")
+        start_response("200 OK", [
+            ("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(payload))),
+            ("Content-Security-Policy", csp_for(ui_html)), ("X-Content-Type-Options", "nosniff"),
+            ("Referrer-Policy", "no-referrer"), ("Cache-Control", "no-cache")])
         return [payload]
 
     def public(link):
@@ -394,6 +420,10 @@ def make_app(service: ShortenerService, limiter: RateLimiter | None = None,
     def route(environ, start_response):
         method, path = environ["REQUEST_METHOD"], environ.get("PATH_INFO", "/")
         client = environ.get("REMOTE_ADDR", "unknown")
+        if path == "/" and ui_html is not None:
+            if method != "GET":
+                raise MethodNotAllowed("use GET")
+            return respond_ui(start_response)
         if path == "/healthz":
             return respond(start_response, 200, {"status": "ok"})
         if path == "/api/shorten":
@@ -439,9 +469,12 @@ def serve(host: str = "127.0.0.1", port: int = 8000, db_path: str = "shortener.d
     """Run the service with the standard-library WSGI server (development use; single-threaded)."""
     from wsgiref.simple_server import make_server
 
-    app = make_app(ShortenerService(LinkRepository(db_path)), base_url=f"http://{host}:{port}")
+    ui_file = Path(__file__).with_name("ui.html")  # optional web UI shipped next to this module
+    ui_html = ui_file.read_text(encoding="utf-8") if ui_file.exists() else None
+    app = make_app(ShortenerService(LinkRepository(db_path)), base_url=f"http://{host}:{port}", ui_html=ui_html)
     with make_server(host, port, app) as httpd:
         print(f"URL shortener listening on http://{host}:{port}  (Ctrl+C to stop)")
+        print("Web UI: " + (f"http://{host}:{port}/" if ui_html else "not found (put ui.html next to this file)"))
         httpd.serve_forever()
 
 

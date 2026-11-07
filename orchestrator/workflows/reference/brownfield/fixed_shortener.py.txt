@@ -1,0 +1,489 @@
+"""URL shortener: domain rules, SQLite persistence and a WSGI HTTP API in one stdlib-only module.
+
+Layers, top to bottom: HTTP adapter (make_app) -> ShortenerService -> LinkRepository (SQLite).
+Run it with `python shortener.py [port]`; see the docs for the API.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import ipaddress
+import json
+import logging
+import math
+import re
+import secrets
+import sqlite3
+import sys
+import threading
+import time
+from http import HTTPStatus
+from pathlib import Path
+from urllib.parse import urlsplit
+
+ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+CODE_LENGTH = 7
+MAX_URL_LENGTH = 2048
+MAX_BODY_BYTES = 4096
+ALIAS_RE = re.compile(r"[A-Za-z0-9_-]{3,32}")
+RESERVED_ALIASES = frozenset({"api", "healthz", "static", "admin"})
+_INLINE_BLOCK = {tag: re.compile(rf"<{tag}>(.*?)</{tag}>", re.S) for tag in ("script", "style")}
+_NUMERIC_HOST = re.compile(r"(0x[0-9a-f]+|\d+)(\.(0x[0-9a-f]+|\d+))*")
+log = logging.getLogger("shortener")
+
+
+# ----------------------------------------------------------------------------- errors
+class ShortenerError(Exception):
+    """Base class for expected failures; each maps to one HTTP status and one stable error code."""
+
+    status = 400
+    code = "bad_request"
+
+    def __init__(self, message: str = "") -> None:
+        super().__init__(message or self.code)
+
+
+class InvalidUrl(ShortenerError):
+    """The submitted URL failed validation."""
+
+    code = "invalid_url"
+
+
+class InvalidAlias(ShortenerError):
+    """The requested custom alias is malformed or reserved."""
+
+    code = "invalid_alias"
+
+
+class AliasTaken(ShortenerError):
+    """The requested custom alias is already in use."""
+
+    status = 409
+    code = "alias_taken"
+
+
+class NotFound(ShortenerError):
+    """No such short link (or route)."""
+
+    status = 404
+    code = "not_found"
+
+
+class Expired(ShortenerError):
+    """The short link existed but has passed its expiry time."""
+
+    status = 410
+    code = "expired"
+
+
+class RateLimited(ShortenerError):
+    """The client exceeded its request budget; retry_after is in seconds."""
+
+    status = 429
+    code = "rate_limited"
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("too many requests")
+        self.retry_after = retry_after
+
+
+class Unavailable(ShortenerError):
+    """The service could not complete the request right now (for example, code space contention)."""
+
+    status = 503
+    code = "unavailable"
+
+
+class MethodNotAllowed(ShortenerError):
+    """The route exists but not for this HTTP method."""
+
+    status = 405
+    code = "method_not_allowed"
+
+
+class PayloadTooLarge(ShortenerError):
+    """The request body exceeds MAX_BODY_BYTES."""
+
+    status = 413
+    code = "payload_too_large"
+
+
+# ------------------------------------------------------------------------- validation
+def _is_private_host(host: str) -> bool:
+    host = host.lower().rstrip(".")
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # numeric-looking hosts that are not a valid dotted quad (e.g. 2130706433) are ambiguous: block
+        return bool(_NUMERIC_HOST.fullmatch(host))
+    return (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+            or ip.is_multicast or ip.is_unspecified)
+
+
+def validate_url(url: str) -> str:
+    """Return the cleaned absolute http(s) URL, or raise InvalidUrl."""
+    if not isinstance(url, str):
+        raise InvalidUrl("url must be a string")
+    url = url.strip()
+    if not url or len(url) > MAX_URL_LENGTH:
+        raise InvalidUrl(f"url must be 1-{MAX_URL_LENGTH} characters")
+    if not url.isascii():
+        raise InvalidUrl("url must be ASCII; percent-encode other characters (punycode for domains)")
+    if any(ch.isspace() or ord(ch) < 32 for ch in url):
+        raise InvalidUrl("url must not contain whitespace or control characters")
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        _ = parts.port  # raises ValueError for an invalid port
+    except ValueError:
+        raise InvalidUrl("url is malformed") from None
+    if parts.scheme not in ("http", "https") or not host:
+        raise InvalidUrl("only absolute http(s) URLs are allowed")
+    if parts.username or parts.password:
+        raise InvalidUrl("credentials in URLs are not allowed")
+    if _is_private_host(host):
+        raise InvalidUrl("private or local addresses are not allowed")
+    return url
+
+
+def validate_alias(alias: str) -> str:
+    """Return the alias if it is 3-32 characters of letters, digits, '_' or '-' and not reserved."""
+    if not isinstance(alias, str) or not ALIAS_RE.fullmatch(alias):
+        raise InvalidAlias("alias must be 3-32 characters: letters, digits, '_' or '-'")
+    if alias.lower() in RESERVED_ALIASES:
+        raise InvalidAlias("alias is reserved")
+    return alias
+
+
+# ----------------------------------------------------------------------- rate limiting
+class RateLimiter:
+    """Fixed-window limiter keyed by client. Thread-safe; the clock is injectable for tests."""
+
+    def __init__(self, limit: int = 30, window_s: int = 60, clock=time.time) -> None:
+        self.limit, self.window_s, self._clock = limit, window_s, clock
+        self._hits: dict[str, tuple[int, int]] = {}
+        self._lock = threading.Lock()
+
+    def check(self, key: str) -> None:
+        """Count one request for `key`; raise RateLimited when the window budget is spent."""
+        now = self._clock()
+        window = int(now // self.window_s)
+        with self._lock:
+            seen_window, count = self._hits.get(key, (window, 0))
+            if seen_window != window:
+                count = 0
+            if count >= self.limit:
+                raise RateLimited(max(1, math.ceil((window + 1) * self.window_s - now)))
+            self._hits[key] = (window, count + 1)
+            if len(self._hits) > 10_000:  # bound memory: forget clients from older windows
+                self._hits = {k: v for k, v in self._hits.items() if v[0] == window}
+
+
+# ------------------------------------------------------------------------- persistence
+class LinkRepository:
+    """SQLite persistence. One connection guarded by a lock, so it is safe across server threads.
+
+    All SQL is parameterised; user input is never concatenated into a statement.
+    """
+
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS links (
+        code TEXT PRIMARY KEY,
+        url TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        expires_at REAL,
+        custom INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_links_url ON links(url);
+    CREATE TABLE IF NOT EXISTS clicks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL REFERENCES links(code) ON DELETE CASCADE,
+        ts REAL NOT NULL,
+        referrer TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_clicks_code ON clicks(code, ts);
+    """
+
+    def __init__(self, path: str = ":memory:") -> None:
+        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db.execute("PRAGMA foreign_keys = ON")
+        if path != ":memory:":
+            self._db.execute("PRAGMA journal_mode = WAL")
+        self._db.executescript(self.SCHEMA)
+        self._lock = threading.Lock()
+        self._purge_orphans()
+
+    @staticmethod
+    def _link(row) -> dict | None:
+        if row is None:
+            return None
+        return {"code": row[0], "url": row[1], "created_at": row[2], "expires_at": row[3], "custom": bool(row[4])}
+
+    def add(self, code: str, url: str, created_at: float, expires_at: float | None, custom: bool) -> bool:
+        """Insert a link; return False if the code already exists."""
+        try:
+            with self._lock, self._db:
+                self._db.execute(
+                    "INSERT INTO links (code, url, created_at, expires_at, custom) VALUES (?, ?, ?, ?, ?)",
+                    (code, url, created_at, expires_at, int(custom)))
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def get(self, code: str) -> dict | None:
+        """Return the link stored under `code`, or None."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT code, url, created_at, expires_at, custom FROM links WHERE code = ?", (code,)).fetchone()
+        return self._link(row)
+
+    def find_permanent(self, url: str) -> dict | None:
+        """Return the oldest auto-generated, non-expiring link for `url` (used for idempotent shorten)."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT code, url, created_at, expires_at, custom FROM links "
+                "WHERE url = ? AND custom = 0 AND expires_at IS NULL ORDER BY created_at LIMIT 1", (url,)).fetchone()
+        return self._link(row)
+
+    def delete(self, code: str) -> bool:
+        """Delete a link and its clicks; return whether it existed."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM clicks WHERE code = ?", (code,))  # explicit: never rely on the cascade alone
+            return self._db.execute("DELETE FROM links WHERE code = ?", (code,)).rowcount > 0
+
+    def _purge_orphans(self) -> None:
+        """Migration: remove clicks whose link no longer exists (left behind by older versions); idempotent."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM clicks WHERE code NOT IN (SELECT code FROM links)")
+
+    def record_click(self, code: str, ts: float, referrer: str | None) -> None:
+        """Append one click event."""
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO clicks (code, ts, referrer) VALUES (?, ?, ?)", (code, ts, referrer))
+
+    def stats(self, code: str) -> dict:
+        """Aggregate click analytics for one link."""
+        with self._lock:
+            total, last = self._db.execute(
+                "SELECT COUNT(*), MAX(ts) FROM clicks WHERE code = ?", (code,)).fetchone()
+            by_day = self._db.execute(
+                "SELECT strftime('%Y-%m-%d', ts, 'unixepoch') AS d, COUNT(*) FROM clicks "
+                "WHERE code = ? GROUP BY d ORDER BY d", (code,)).fetchall()
+            refs = self._db.execute(
+                "SELECT referrer, COUNT(*) AS c FROM clicks WHERE code = ? AND referrer IS NOT NULL "
+                "GROUP BY referrer ORDER BY c DESC, referrer LIMIT 5", (code,)).fetchall()
+        return {"total": total, "last": last, "by_day": dict(by_day), "referrers": [list(r) for r in refs]}
+
+
+# ----------------------------------------------------------------------------- service
+class ShortenerService:
+    """Business rules: validation, code allocation, idempotency, expiry and click analytics."""
+
+    def __init__(self, repo: LinkRepository | None = None, clock=time.time, code_factory=None,
+                 max_ttl_s: int = 365 * 24 * 3600) -> None:
+        self.repo = repo or LinkRepository()
+        self._clock = clock
+        self._new_code = code_factory or self._random_code
+        self.max_ttl_s = max_ttl_s
+        self.analytics_errors = 0
+
+    @staticmethod
+    def _random_code() -> str:
+        return "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
+
+    @staticmethod
+    def _expired(link: dict, now: float) -> bool:
+        return link["expires_at"] is not None and now >= link["expires_at"]
+
+    def shorten(self, url: str, alias: str | None = None, ttl_seconds: int | None = None) -> tuple[dict, bool]:
+        """Create a short link and return (link, created); an identical permanent link is reused."""
+        url = validate_url(url)
+        now = self._clock()
+        expires_at = None
+        if ttl_seconds is not None:
+            valid = isinstance(ttl_seconds, int) and not isinstance(ttl_seconds, bool)
+            if not valid or not 1 <= ttl_seconds <= self.max_ttl_s:
+                raise ShortenerError(f"ttl_seconds must be an integer between 1 and {self.max_ttl_s}")
+            expires_at = now + ttl_seconds
+        if alias is not None:
+            alias = validate_alias(alias)
+            if not self.repo.add(alias, url, now, expires_at, True):
+                current = self.repo.get(alias)
+                if current and self._expired(current, now):  # an expired alias may be reclaimed
+                    self.repo.delete(alias)
+                    if self.repo.add(alias, url, now, expires_at, True):
+                        return self.repo.get(alias), True
+                raise AliasTaken(f"alias '{alias}' is already in use")
+            return self.repo.get(alias), True
+        if expires_at is None:
+            existing = self.repo.find_permanent(url)
+            if existing:
+                return existing, False
+        for _ in range(5):  # collisions are possible but rare: retry with a fresh code
+            code = self._new_code()
+            if self.repo.add(code, url, now, expires_at, False):
+                return self.repo.get(code), True
+        raise Unavailable("could not allocate a unique code; try again")
+
+    def _get(self, code: str) -> dict:
+        link = self.repo.get(code)
+        if link is None:
+            raise NotFound("no such short link")
+        return link
+
+    def resolve(self, code: str, referrer: str | None = None) -> str:
+        """Return the redirect target and record the click. Analytics failures never break redirects."""
+        link = self._get(code)
+        now = self._clock()
+        if self._expired(link, now):
+            raise Expired("this short link has expired")
+        try:
+            self.repo.record_click(code, now, (referrer or "")[:200] or None)
+        except sqlite3.Error:
+            self.analytics_errors += 1
+            log.warning("click not recorded for %s", code)
+        return link["url"]
+
+    def get_link(self, code: str) -> dict:
+        """Return link metadata (including whether it has expired)."""
+        link = self._get(code)
+        return {**link, "expired": self._expired(link, self._clock())}
+
+    def stats(self, code: str) -> dict:
+        """Return click analytics; available after expiry so owners can still read results."""
+        self._get(code)
+        s = self.repo.stats(code)
+        return {"code": code, "total_clicks": s["total"], "last_accessed": s["last"],
+                "clicks_by_day": s["by_day"], "top_referrers": s["referrers"]}
+
+    def delete(self, code: str) -> None:
+        """Delete a link and its analytics."""
+        if not self.repo.delete(code):
+            raise NotFound("no such short link")
+
+
+# -------------------------------------------------------------------------- HTTP (WSGI)
+def csp_for(html: str) -> str:
+    """Build a strict Content-Security-Policy that allows only this page's own inline script and style blocks.
+
+    Each block is allowed by its SHA-256 hash, so there is no 'unsafe-inline' and injected markup cannot run.
+    """
+    def allowed(tag: str) -> str:
+        digests = [base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode()
+                   for body in _INLINE_BLOCK[tag].findall(html)]
+        return " ".join(f"'sha256-{d}'" for d in digests) or "'none'"
+
+    return (f"default-src 'none'; script-src {allowed('script')}; style-src {allowed('style')}; "
+            "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+
+
+def _iso(ts: float | None) -> str | None:
+    return None if ts is None else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def make_app(service: ShortenerService, limiter: RateLimiter | None = None,
+             base_url: str = "http://localhost:8000", ui_html: str | None = None):
+    """Return a WSGI application exposing the service over HTTP (JSON API, redirects and an optional web UI)."""
+    limiter = limiter or RateLimiter()
+
+    def respond(start_response, status, body=None, headers=()):
+        payload = b"" if body is None else json.dumps(body).encode()
+        out_headers = list(headers) + [("Content-Length", str(len(payload)))]
+        if payload:
+            out_headers.append(("Content-Type", "application/json"))
+        start_response(f"{status} {HTTPStatus(status).phrase}", out_headers)
+        return [payload]
+
+    def respond_ui(start_response):
+        payload = ui_html.encode("utf-8")
+        start_response("200 OK", [
+            ("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(payload))),
+            ("Content-Security-Policy", csp_for(ui_html)), ("X-Content-Type-Options", "nosniff"),
+            ("Referrer-Policy", "no-referrer"), ("Cache-Control", "no-cache")])
+        return [payload]
+
+    def public(link):
+        return {"code": link["code"], "short_url": f"{base_url}/{link['code']}", "url": link["url"],
+                "created_at": _iso(link["created_at"]), "expires_at": _iso(link["expires_at"]),
+                **({"expired": link["expired"]} if "expired" in link else {})}
+
+    def read_json(environ):
+        try:
+            length = int(environ.get("CONTENT_LENGTH") or 0)
+        except ValueError:
+            raise ShortenerError("invalid Content-Length") from None
+        if length > MAX_BODY_BYTES:
+            raise PayloadTooLarge(f"body exceeds {MAX_BODY_BYTES} bytes")
+        try:
+            data = json.loads(environ["wsgi.input"].read(length) or b"")
+        except ValueError:
+            raise ShortenerError("body must be valid JSON") from None
+        if not isinstance(data, dict):
+            raise ShortenerError("body must be a JSON object")
+        return data
+
+    def route(environ, start_response):
+        method, path = environ["REQUEST_METHOD"], environ.get("PATH_INFO", "/")
+        client = environ.get("REMOTE_ADDR", "unknown")
+        if path == "/" and ui_html is not None:
+            if method != "GET":
+                raise MethodNotAllowed("use GET")
+            return respond_ui(start_response)
+        if path == "/healthz":
+            return respond(start_response, 200, {"status": "ok"})
+        if path == "/api/shorten":
+            if method != "POST":
+                raise MethodNotAllowed("use POST")
+            limiter.check(client)
+            body = read_json(environ)
+            link, created = service.shorten(body.get("url"), body.get("alias"), body.get("ttl_seconds"))
+            return respond(start_response, 201 if created else 200, public(link))
+        m = re.fullmatch(r"/api/links/([A-Za-z0-9_-]{1,64})(/stats)?", path)
+        if m:
+            code, wants_stats = m.group(1), bool(m.group(2))
+            if method == "GET":
+                return respond(start_response, 200, service.stats(code) if wants_stats
+                               else public(service.get_link(code)))
+            if method == "DELETE" and not wants_stats:
+                limiter.check(client)
+                service.delete(code)
+                return respond(start_response, 204)
+            raise MethodNotAllowed("method not allowed for this resource")
+        m = re.fullmatch(r"/([A-Za-z0-9_-]{1,64})", path)
+        if m:
+            if method != "GET":
+                raise MethodNotAllowed("use GET")
+            target = service.resolve(m.group(1), environ.get("HTTP_REFERER"))
+            return respond(start_response, 302, None, [("Location", target), ("Cache-Control", "no-store")])
+        raise NotFound("no such route")
+
+    def app(environ, start_response):
+        try:
+            return route(environ, start_response)
+        except ShortenerError as exc:
+            extra = [("Retry-After", str(exc.retry_after))] if isinstance(exc, RateLimited) else []
+            return respond(start_response, exc.status, {"error": {"code": exc.code, "message": str(exc)}}, extra)
+        except Exception:  # never leak internals to clients
+            log.exception("unhandled error")
+            return respond(start_response, 500, {"error": {"code": "internal_error", "message": "internal error"}})
+
+    return app
+
+
+def serve(host: str = "127.0.0.1", port: int = 8000, db_path: str = "shortener.db") -> None:
+    """Run the service with the standard-library WSGI server (development use; single-threaded)."""
+    from wsgiref.simple_server import make_server
+
+    ui_file = Path(__file__).with_name("ui.html")  # optional web UI shipped next to this module
+    ui_html = ui_file.read_text(encoding="utf-8") if ui_file.exists() else None
+    app = make_app(ShortenerService(LinkRepository(db_path)), base_url=f"http://{host}:{port}", ui_html=ui_html)
+    with make_server(host, port, app) as httpd:
+        print(f"URL shortener listening on http://{host}:{port}  (Ctrl+C to stop)")
+        print("Web UI: " + (f"http://{host}:{port}/" if ui_html else "not found (put ui.html next to this file)"))
+        httpd.serve_forever()
+
+
+if __name__ == "__main__":
+    serve(port=int(sys.argv[1]) if len(sys.argv) > 1 else 8000)

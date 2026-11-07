@@ -1,0 +1,331 @@
+import base64
+import hashlib
+import io
+import json
+import sqlite3
+import tempfile
+import threading
+
+
+class FakeClock:
+    def __init__(self, now=1_700_000_000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+def make_service(**kw):
+    clock = FakeClock()
+    return ShortenerService(LinkRepository(), clock=clock, **kw), clock
+
+
+def call_app(app, method, path, body=None, extra=None):
+    raw = body if isinstance(body, bytes) else (json.dumps(body).encode() if body is not None else b"")
+    environ = {"REQUEST_METHOD": method, "PATH_INFO": path, "CONTENT_LENGTH": str(len(raw)),
+               "wsgi.input": io.BytesIO(raw), "REMOTE_ADDR": "10.0.0.1"}
+    environ.update(extra or {})
+    seen = {}
+
+    def start_response(status, headers):
+        seen["status"], seen["headers"] = int(status.split()[0]), dict(headers)
+
+    out = b"".join(app(environ, start_response))
+    if seen["headers"].get("Content-Type", "").startswith("text/html"):
+        return seen["status"], seen["headers"], out.decode("utf-8")
+    return seen["status"], seen["headers"], (json.loads(out) if out else None)
+
+
+def raises(exc, fn, *args, **kw):
+    try:
+        fn(*args, **kw)
+    except exc as e:
+        return e
+    raise AssertionError(f"expected {exc.__name__}")
+
+
+# ---------------------------------------------------------------- validation
+def test_validate_url_accepts_http_and_https():
+    assert validate_url("https://example.com/a?b=1#c") == "https://example.com/a?b=1#c"
+    assert validate_url("  http://example.com:8080/x  ") == "http://example.com:8080/x"
+
+
+def test_validate_url_rejects_unsafe_or_malformed_input():
+    bad = ["ftp://example.com/f", "javascript:alert(1)", "http://", "not a url", "//example.com",
+           "http://user:pw@example.com/", "http://localhost/x", "http://app.localhost/", "http://127.0.0.1/",
+           "http://10.1.2.3/", "http://192.168.0.1/", "http://169.254.169.254/latest", "http://[::1]/",
+           "http://2130706433/", "http://example.com:99999/", "http://exa mple.com/",
+           "http://a.com/\r\nSet-Cookie: x=1", "http://exämple.com/", "https://example.com/" + "a" * 2100, "", None, 42]
+    for url in bad:
+        raises(InvalidUrl, validate_url, url)
+
+
+def test_validate_alias_rules():
+    assert validate_alias("my-link_1") == "my-link_1"
+    for bad in ["ab", "a" * 33, "has space", "api", "HEALTHZ", "bad/slash", "trailing\n", "q'uote", "", None]:
+        raises(InvalidAlias, validate_alias, bad)
+
+
+# ------------------------------------------------------------------ service
+def test_shorten_creates_code_with_expected_shape():
+    svc, _ = make_service()
+    link, created = svc.shorten("https://example.com/page")
+    assert created and len(link["code"]) == CODE_LENGTH and set(link["code"]) <= set(ALPHABET)
+    assert link["url"] == "https://example.com/page" and link["expires_at"] is None
+
+
+def test_same_url_is_idempotent_for_permanent_links():
+    svc, _ = make_service()
+    first, c1 = svc.shorten("https://example.com/same")
+    second, c2 = svc.shorten("https://example.com/same")
+    assert first["code"] == second["code"] and c1 and not c2
+
+
+def test_custom_alias_and_conflict():
+    svc, _ = make_service()
+    link, created = svc.shorten("https://example.com/a", alias="promo-2026")
+    assert created and link["code"] == "promo-2026" and link["custom"]
+    raises(AliasTaken, svc.shorten, "https://example.com/other", alias="promo-2026")
+
+
+def test_ttl_must_be_a_sensible_integer():
+    svc, _ = make_service(max_ttl_s=1000)
+    for bad in [0, -5, True, "60", 1.5, 1001]:
+        raises(ShortenerError, svc.shorten, "https://example.com/t", ttl_seconds=bad)
+
+
+def test_ttl_links_are_never_reused_by_idempotency():
+    svc, _ = make_service()
+    a, _ = svc.shorten("https://example.com/t", ttl_seconds=60)
+    b, _ = svc.shorten("https://example.com/t", ttl_seconds=60)
+    assert a["code"] != b["code"]
+
+
+def test_expired_link_is_gone_and_unknown_is_not_found():
+    svc, clock = make_service()
+    link, _ = svc.shorten("https://example.com/e", ttl_seconds=30)
+    assert svc.resolve(link["code"]) == "https://example.com/e"
+    clock.advance(30)
+    raises(Expired, svc.resolve, link["code"])
+    raises(NotFound, svc.resolve, "nope123")
+
+
+def test_expired_alias_can_be_reclaimed_but_live_alias_cannot():
+    svc, clock = make_service()
+    svc.shorten("https://example.com/old", alias="reuse-me", ttl_seconds=10)
+    raises(AliasTaken, svc.shorten, "https://example.com/new", alias="reuse-me")
+    clock.advance(11)
+    link, created = svc.shorten("https://example.com/new", alias="reuse-me")
+    assert created and svc.resolve("reuse-me") == "https://example.com/new"
+
+
+def test_collision_is_retried_and_persistent_collision_is_unavailable():
+    codes = iter(["AAAAAAA", "AAAAAAA", "BBBBBBB"])
+    svc, _ = make_service(code_factory=lambda: next(codes))
+    assert svc.shorten("https://example.com/1")[0]["code"] == "AAAAAAA"
+    assert svc.shorten("https://example.com/2")[0]["code"] == "BBBBBBB"
+    svc2, _ = make_service(code_factory=lambda: "SAMECODE")
+    svc2.shorten("https://example.com/x")
+    raises(Unavailable, svc2.shorten, "https://example.com/y")
+
+
+def test_clicks_are_counted_by_day_and_referrer():
+    svc, clock = make_service()
+    code = svc.shorten("https://example.com/c")[0]["code"]
+    svc.resolve(code, "https://news.example/a")
+    svc.resolve(code, "https://news.example/a")
+    clock.advance(86400)
+    svc.resolve(code, "https://blog.example/b")
+    svc.resolve(code)
+    s = svc.stats(code)
+    assert s["total_clicks"] == 4 and len(s["clicks_by_day"]) == 2
+    assert sorted(s["clicks_by_day"].values()) == [2, 2]
+    assert s["top_referrers"][0] == ["https://news.example/a", 2]
+    assert s["last_accessed"] == clock.now
+
+
+def test_analytics_failure_never_breaks_the_redirect():
+    class BrokenAnalytics(LinkRepository):
+        def record_click(self, code, ts, referrer):
+            raise sqlite3.OperationalError("disk I/O error")
+
+    svc = ShortenerService(BrokenAnalytics(), clock=FakeClock())
+    code = svc.shorten("https://example.com/r")[0]["code"]
+    assert svc.resolve(code) == "https://example.com/r" and svc.analytics_errors == 1
+
+
+def test_metadata_and_stats_remain_available_after_expiry():
+    svc, clock = make_service()
+    code = svc.shorten("https://example.com/m", ttl_seconds=5)[0]["code"]
+    svc.resolve(code)
+    clock.advance(10)
+    assert svc.get_link(code)["expired"] is True and svc.stats(code)["total_clicks"] == 1
+
+
+def test_sql_metacharacters_are_stored_as_data():
+    svc, _ = make_service()
+    url = "https://example.com/?q='%20OR%201=1;DROP%20TABLE%20links;--"
+    code = svc.shorten(url)[0]["code"]
+    assert svc.resolve(code) == url
+    assert svc.repo.get(code)["url"] == url
+
+
+def test_links_survive_a_restart():
+    path = tempfile.mkdtemp() + "/links.db"
+    code = ShortenerService(LinkRepository(path)).shorten("https://example.com/p")[0]["code"]
+    assert ShortenerService(LinkRepository(path)).resolve(code) == "https://example.com/p"
+
+
+def test_concurrent_shortening_is_safe_and_codes_are_unique():
+    svc, _ = make_service()
+    errors, codes = [], []
+
+    def worker(n):
+        try:
+            for i in range(20):
+                codes.append(svc.shorten(f"https://example.com/{n}/{i}")[0]["code"])
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors and len(codes) == 160 and len(set(codes)) == 160
+
+
+# ------------------------------------------------------------- rate limiting
+def test_rate_limiter_blocks_then_recovers_next_window_and_isolates_clients():
+    clock = FakeClock(1000.0)
+    rl = RateLimiter(limit=2, window_s=60, clock=clock)
+    rl.check("a")
+    rl.check("a")
+    err = raises(RateLimited, rl.check, "a")
+    assert 1 <= err.retry_after <= 60
+    rl.check("b")
+    clock.advance(60)
+    rl.check("a")
+
+
+# ------------------------------------------------------------------- HTTP API
+def make_test_app(**kw):
+    svc, clock = make_service()
+    return make_app(svc, **kw), svc, clock
+
+
+def test_api_shorten_redirect_and_stats_flow():
+    app, _, _ = make_test_app(base_url="http://sho.rt")
+    status, _, body = call_app(app, "POST", "/api/shorten", {"url": "https://example.com/long/path"})
+    assert status == 201 and body["short_url"] == "http://sho.rt/" + body["code"]
+    status, headers, _ = call_app(app, "GET", "/" + body["code"], extra={"HTTP_REFERER": "https://ref.example/"})
+    assert status == 302 and headers["Location"] == "https://example.com/long/path"
+    status, _, stats = call_app(app, "GET", f"/api/links/{body['code']}/stats")
+    assert status == 200 and stats["total_clicks"] == 1 and stats["top_referrers"] == [["https://ref.example/", 1]]
+
+
+def test_api_repeat_shorten_returns_200_with_same_code():
+    app, _, _ = make_test_app()
+    _, _, first = call_app(app, "POST", "/api/shorten", {"url": "https://example.com/r"})
+    status, _, second = call_app(app, "POST", "/api/shorten", {"url": "https://example.com/r"})
+    assert status == 200 and first["code"] == second["code"]
+
+
+def test_api_maps_errors_to_status_codes_and_stable_codes():
+    app, _, clock = make_test_app()
+    assert call_app(app, "POST", "/api/shorten", {"url": "ftp://x.com"})[::2] == (400, {"error": {
+        "code": "invalid_url", "message": "only absolute http(s) URLs are allowed"}})
+    assert call_app(app, "GET", "/missing1")[0] == 404
+    call_app(app, "POST", "/api/shorten", {"url": "https://example.com/a", "alias": "taken-1"})
+    status, _, body = call_app(app, "POST", "/api/shorten", {"url": "https://example.com/b", "alias": "taken-1"})
+    assert status == 409 and body["error"]["code"] == "alias_taken"
+    call_app(app, "POST", "/api/shorten", {"url": "https://example.com/c", "alias": "short-lived", "ttl_seconds": 5})
+    clock.advance(6)
+    assert call_app(app, "GET", "/short-lived")[0] == 410
+
+
+def test_api_rejects_bad_bodies():
+    app, _, _ = make_test_app()
+    assert call_app(app, "POST", "/api/shorten", b"{not json")[0] == 400
+    assert call_app(app, "POST", "/api/shorten", [1, 2])[0] == 400
+    assert call_app(app, "POST", "/api/shorten", b"")[0] == 400
+    assert call_app(app, "POST", "/api/shorten", b"x" * 5000)[0] == 413
+    assert call_app(app, "POST", "/api/shorten", {"url": "https://example.com", "ttl_seconds": "soon"})[0] == 400
+
+
+def test_api_rate_limit_returns_429_with_retry_after():
+    app, _, _ = make_test_app(limiter=RateLimiter(limit=2, window_s=60, clock=FakeClock(0.0)))
+    for i in range(2):
+        assert call_app(app, "POST", "/api/shorten", {"url": f"https://example.com/{i}"})[0] == 201
+    status, headers, body = call_app(app, "POST", "/api/shorten", {"url": "https://example.com/3"})
+    assert status == 429 and int(headers["Retry-After"]) >= 1 and body["error"]["code"] == "rate_limited"
+
+
+def test_api_methods_routes_and_health():
+    app, _, _ = make_test_app()
+    assert call_app(app, "GET", "/healthz")[::2] == (200, {"status": "ok"})
+    assert call_app(app, "GET", "/api/shorten")[0] == 405
+    assert call_app(app, "PUT", "/api/shorten")[0] == 405
+    assert call_app(app, "POST", "/abcdefg")[0] == 405
+    assert call_app(app, "GET", "/no/such/route")[0] == 404
+
+
+def test_api_delete_flow():
+    app, _, _ = make_test_app()
+    code = call_app(app, "POST", "/api/shorten", {"url": "https://example.com/del"})[2]["code"]
+    assert call_app(app, "DELETE", f"/api/links/{code}")[::2] == (204, None)
+    assert call_app(app, "DELETE", f"/api/links/{code}")[0] == 404
+    assert call_app(app, "GET", "/" + code)[0] == 404
+
+
+def test_api_hides_internal_errors():
+    class Exploding(ShortenerService):
+        def shorten(self, *args, **kwargs):
+            raise RuntimeError("boom: secret internals")
+
+    app = make_app(Exploding(clock=FakeClock()))
+    status, _, body = call_app(app, "POST", "/api/shorten", {"url": "https://example.com"})
+    assert status == 500 and "boom" not in json.dumps(body) and body["error"]["code"] == "internal_error"
+
+
+# ------------------------------------------------------------------ web UI serving
+UI_PAGE = "<html><head><style>p{color:red}</style></head><body><script>var x = 1;</script></body></html>"
+
+
+def sha_token(body):
+    return "'sha256-" + base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode() + "'"
+
+
+def test_ui_is_served_at_root_with_strict_security_headers():
+    app, _, _ = make_test_app(ui_html=UI_PAGE)
+    status, headers, _ = call_app(app, "GET", "/")
+    assert status == 200 and headers["Content-Type"] == "text/html; charset=utf-8"
+    assert headers["X-Content-Type-Options"] == "nosniff" and headers["Referrer-Policy"] == "no-referrer"
+    csp = headers["Content-Security-Policy"]
+    assert "default-src 'none'" in csp and "frame-ancestors 'none'" in csp and "unsafe-inline" not in csp
+
+
+def test_csp_allows_exactly_the_pages_own_inline_blocks_by_hash():
+    csp = csp_for(UI_PAGE)
+    assert f"script-src {sha_token('var x = 1;')};" in csp and f"style-src {sha_token('p{color:red}')};" in csp
+    assert sha_token("alert(1)") not in csp
+
+
+def test_csp_without_inline_blocks_denies_scripts_and_styles():
+    csp = csp_for("<html><body>plain</body></html>")
+    assert "script-src 'none'" in csp and "style-src 'none'" in csp
+
+
+def test_root_is_not_found_when_no_ui_is_configured_and_rejects_other_methods_when_it_is():
+    plain, _, _ = make_test_app()
+    assert call_app(plain, "GET", "/")[0] == 404
+    with_ui, _, _ = make_test_app(ui_html=UI_PAGE)
+    assert call_app(with_ui, "POST", "/")[0] == 405 and call_app(with_ui, "DELETE", "/")[0] == 405
+
+
+def test_ui_page_does_not_disturb_api_routes():
+    app, _, _ = make_test_app(ui_html=UI_PAGE)
+    assert call_app(app, "GET", "/healthz")[0] == 200
+    status, _, body = call_app(app, "POST", "/api/shorten", {"url": "https://example.com/with-ui"})
+    assert status == 201 and call_app(app, "GET", "/" + body["code"])[0] == 302

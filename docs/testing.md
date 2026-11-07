@@ -7,10 +7,12 @@ Testing happens at four levels. Each answers a different question, and each can 
 | 1. Engine and governance unit tests | Graph, retries, fallback, rollback, backoff, policies, linter, re-plan limits, metrics | `tests/test_core.py`, `test_resilience.py`, `test_policies.py`, `test_slice.py`, `test_simple_graph.py` | `pytest -v` |
 | 2. Shortener service tests | The generated service's behaviour: validation, expiry, idempotency, analytics, rate limiting, concurrency, HTTP mapping | `orchestrator/workflows/reference/shortener/tests.py.txt`, exposed one-per-item by `tests/test_shortener_service.py` | `pytest tests/test_shortener_service.py -v` |
 | 3. Orchestration scenario tests | The whole governed pipeline building the shortener, under each failure and policy scenario, plus a real HTTP run of the generated file | `tests/test_shortener_workflow.py` | `pytest tests/test_shortener_workflow.py -v` |
+| 3b. Web UI | UI security/compliance policies; the page's real script driven by a Node harness against a live server (needs Node 18+, skipped otherwise); generated service started as a script and `/` fetched | `tests/test_ui.py`, `tests/ui_harness.js` | `pytest tests/test_ui.py -v` |
+| 3c. Brownfield | Scenario integrity (bug is real, fix works), each guard in isolation, every violation under the orchestrator | `tests/test_codeintel.py`, `tests/test_brownfield.py` | `pytest tests/test_brownfield.py -v` |
 | 4. Live smoke test | A running server, driven over the network like a real client | `scripts/smoke_test.py`, checked by `tests/test_smoke_script.py` | `python scripts/smoke_test.py` |
 
 ## Single source of truth for the shortener tests
-The 27 service tests are the **same file** in three roles: the quality gate inside the orchestrator (run in an
+The 32 service tests are the **same file** in three roles: the quality gate inside the orchestrator (run in an
 isolated sandbox before code is committed), individual pytest items (for readable CI output), and the
 reference artifact a mock agent returns. A guard test fails if pytest and the sandbox ever disagree about
 which tests exist, so tests cannot be dropped silently.
@@ -36,7 +38,14 @@ python scripts/smoke_test.py       # against a server you started yourself
 ```
 `pytest.ini` limits collection to `tests/`, so scripts in `scripts/` are never mistaken for tests.
 
+## UI testing without a browser
+There is no browser in the test environment, so `tests/ui_harness.js` runs the page's own inline script in Node
+with a minimal fake DOM and the real `fetch`, against a real server. It checks health display, creating links,
+expiry display, click refresh, server error messages, rate-limit messaging, that markup in a URL is shown as
+text, delete, and local-storage persistence. Four injected JavaScript defects were all caught. What it cannot
+show: real layout, styling and cross-browser behaviour, which need a manual look in a browser.
+
 ## Known gaps
-No load or soak testing (the development server is single-threaded); no multi-process or real-database
+No visual or cross-browser UI testing; no load or soak testing (the development server is single-threaded); no multi-process or real-database
 tests; DNS-based SSRF is untested because the service does not resolve names; authentication does not exist
 yet; LLM-generated code quality is untested because the agents are offline mocks.
