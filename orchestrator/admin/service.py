@@ -98,9 +98,26 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+_MAIN_GUARD = re.compile(r"""__name__\s*==\s*['"]__main__['"]""")
+_SERVER_MARKERS = ("make_server", "serve_forever", "wsgiref", "http.server", "HTTPServer", "socketserver")
+
+
+def why_not_runnable(code: str) -> str | None:
+    """None when the file looks like a program that starts a web server; otherwise the reason it is not offered as a service.
+
+    This looks at BEHAVIOUR (a `__main__` block, a server being started), never at the names a particular implementation chose:
+    a real model structures its service its own way (the first live run used classes, not our reference's make_app/serve).
+    """
+    if not _MAIN_GUARD.search(code):
+        return "it has no `if __name__ == \"__main__\":` block, so it cannot be started as a program"
+    if not any(m in code for m in _SERVER_MARKERS):
+        return "it does not appear to start a web server (no wsgiref or http.server use)"
+    return None
+
+
 def is_runnable(code: str) -> bool:
-    """A run produced a runnable service when the implementation can serve HTTP when started as a script."""
-    return "def serve(" in code and "def make_app(" in code and "__main__" in code
+    """A run produced a runnable service when the implementation can be started as a script and starts a web server."""
+    return why_not_runnable(code) is None
 
 
 class ServiceError(Exception):
@@ -151,27 +168,46 @@ class ServiceManager:
             work.mkdir(exist_ok=True)
             log = work / "service.log"
             port = free_port()
-            logfile = log.open("wb")
-            try:
-                proc = spawn([sys.executable, "-c", WRAPPER, str(impl), str(port)], work, safe_env(dict(os.environ)), logfile)
-            finally:
-                logfile.close()
-            deadline = time.time() + 12
-            while time.time() < deadline:
-                if proc.poll() is not None:
-                    terminate_tree(proc)                              # a launcher may have died while its child lives on
-                    raise ServiceError(500, "the service exited while starting: " + self._tail(log).strip()[-400:])
-                if port_is_open(port):
+            log.write_bytes(b"")
+            # The requirement template says "python implementation.py 8000" (the port is positional). A model may read it another way
+            # (--port N), so if the first start dies complaining about its arguments, try the other form once.
+            proc = None
+            for args in ([str(port)], ["--port", str(port)]):
+                proc = self._launch(impl, work, port, args, log)
+                early = self._wait_listening(proc, port)
+                if early is None:
                     break
-                time.sleep(0.1)
-            else:
                 terminate_tree(proc)
-                raise ServiceError(500, "the service did not start listening within 12 seconds")
+                text = self._tail(log, 4000).lower()
+                if not ("unrecognized arguments" in text or "usage:" in text) or args[0] == "--port":
+                    raise ServiceError(500, "the service exited while starting: " + self._tail(log).strip()[-400:])
+            else:
+                raise ServiceError(500, "the service exited while starting: " + self._tail(log).strip()[-400:])
+            if proc is None or proc.poll() is not None:
+                raise ServiceError(500, "the service did not start")
             self._proc = proc
             self._last_exit = None
             self.info = {"run_id": run_id, "port": port, "url": f"http://127.0.0.1:{port}/", "pid": proc.pid,
                          "started_at": time.strftime("%H:%M:%S"), "log": log}
         return self.status()
+
+    def _launch(self, impl: Path, work: Path, port: int, args: list[str], log: Path) -> subprocess.Popen:
+        env = safe_env(dict(os.environ))
+        env["PORT"] = str(port)                                      # a hint for programs that read it from the environment
+        with log.open("ab") as logfile:
+            return spawn([sys.executable, "-c", WRAPPER, str(impl), *args], work, env, logfile)
+
+    def _wait_listening(self, proc: subprocess.Popen, port: int) -> str | None:
+        """None once the port is open; 'exited' if the process died first; raises if it never listens."""
+        deadline = time.time() + 12
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                return "exited"
+            if port_is_open(port):
+                return None
+            time.sleep(0.1)
+        terminate_tree(proc)
+        raise ServiceError(500, "the service did not start listening within 12 seconds")
 
     def stop(self) -> dict:
         with self._lock:

@@ -77,4 +77,4 @@ show: real layout, styling and cross-browser behaviour, which need a manual look
 ## Known gaps
 No visual or cross-browser UI testing; no load or soak testing (the development server is single-threaded); no multi-process or real-database
 tests; DNS-based SSRF is untested because the service does not resolve names; authentication does not exist
-yet; LLM-generated code quality is untested because the agents are offline mocks.
+yet; LLM-generated code quality has been exercised by only one complete live run (the agents are offline mocks otherwise).

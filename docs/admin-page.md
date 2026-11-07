@@ -40,7 +40,9 @@ After a run that produced a service (the URL shortener, or the "make links expir
 **Stop service** when you are done. It also stops when the admin page exits. The service's own web page is served at the
 same address, and its database and log live in `runs/<run-id>/service/`, not in your project folder.
 
-* The button appears **only for runs that produced a runnable service**. The toy-function run has none.
+* The button appears **only for runs that produced a runnable service**: a program that can be started (a `__main__` block) and starts a
+  web server. The check looks at behaviour, not at function names, so a real model's own structure is fine. The toy-function run has none,
+  and when a service run cannot be started the page says why. If a program reads its port as `--port N` the launcher tries that form once.
 * **Mock runs** start with one click. **Real-model runs, and runs of unknown origin** (for example made from the command
   line) need you to tick a confirmation first: that code was not produced by the reviewed mock agents and will run with
   your normal permissions. The server enforces this, not just the page.
@@ -81,7 +83,7 @@ There is no login, quota or per-user separation.
 * One active run and one running service at a time. State of a running run is in memory: closing the program loses it (finished runs stay on disk).
 * The page polls (about every 0.7 s) instead of pushing events.
 * Only some scenarios are offered (see above); custom baselines for brownfield are not supported on the page.
-* Like the real-LLM client, the real-model path through the page has been tested against a fake Anthropic server, not the live API.
+* The real-model path is tested against a fake Anthropic server in the build environment; the author has since completed one full live run with Sonnet (the greenfield shortener, every gate and approval passed). One run is an existence proof, not a measure of reliability.
 
 ## Clearing leftover servers (Windows)
 Versions before 0.5.2 could leave a generated service running after Stop, and the test suite could leave some behind too. To find
@@ -99,6 +101,7 @@ Leave the admin page itself (port 8765) running if you are using it. Restarting 
 | Generate stays disabled | a run is still active (stop it), or Real mode's confirmation is unticked |
 | "unexpected Host header" / "missing or wrong admin token" | open the page at `http://127.0.0.1:<port>/` or `http://localhost:<port>/` and reload it |
 | A run waits forever | it is waiting for you: look at "Waiting for you", or press Stop |
+| After a finished run the page says it "cannot offer to start it as a service" | the implementation has no `__main__` block, or does not start a web server; the note names which. Run it yourself: `python runs\<run-id>\artifacts\implementation.py 8000` (copy `ui.html` next to it) |
 | A run halts with `[change_control/max-lines-changed]` | a stage produced more lines than its size limit. Raise it under "Size limits" and generate again, or ask for something smaller |
 | "the security policies now reject this file" | the implementation was edited after the run and now breaks a rule: regenerate it, or fix the named problem |
 | The service's port is still busy after Stop (Windows) | an older version left an orphaned process behind: see "Clearing leftover servers" below, then update |

@@ -29,7 +29,7 @@ from ..observability import metrics as metrics_mod
 from ..observability.audit_log import AuditLog
 from ..runner import run_workflow, write_outputs
 from . import scenarios
-from .service import ServiceError, ServiceManager, is_runnable
+from .service import ServiceError, ServiceManager, is_runnable, why_not_runnable
 from .security import valid_api_key_shape
 
 MAX_REQUIREMENT_CHARS = 20_000
@@ -327,6 +327,12 @@ class RunSession:
         if halt and "[change_control/max-lines-changed]" in halt:
             notes.append("A size limit (change control) stopped this run. If that size is reasonable for what you asked for, raise the limit under "
                          "\"Size limits\" and generate again; the new value is recorded in the audit log. Otherwise ask for something smaller.")
+        if self.engine is not None and not self.busy and scenarios.SCENARIOS[self.cfg["scenario"]].get("service") and self.last_status is RunStatus.COMPLETED:
+            impl = self.run_dir / "artifacts" / "implementation.py"
+            reason = why_not_runnable(impl.read_text(encoding="utf-8", errors="replace")) if impl.is_file() else None
+            if reason:
+                notes.append("This run finished, but the page cannot offer to start it as a service: " + reason + ". The code is in the results; "
+                             "you can still run it yourself with `python implementation.py 8000`.")
         if self.engine is not None and self.engine.rejected and not self.busy:
             notes.append("The last rejected output of the stage that stopped this run is saved in the results as REJECTED-<stage>: open it to see exactly what was refused.")
         if self.cfg["mode"] == "mock" and self.cfg["requirement"].strip() != scenarios.default_requirement(self.cfg["scenario"]).strip():

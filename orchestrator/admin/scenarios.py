@@ -13,13 +13,13 @@ SCENARIOS = {
         "title": "URL shortener (greenfield, with web UI)",
         "description": "Builds the whole service from your requirement: plan, design, code, tests, docs, UI, review, release. "
                        "The full demo. With a real model this is the expensive one (8+ calls).",
-        "workflow": shortener, "asks_questions": False,
+        "workflow": shortener, "asks_questions": False, "service": True,
     },
     "ambiguous": {
         "title": "Ambiguous request: \"make links expire sensibly\"",
         "description": "A vague request on the existing shortener. You answer the high-risk questions on this page, "
                        "and can change an answer afterwards to see the automatic re-plan.",
-        "workflow": ambiguous, "asks_questions": True,
+        "workflow": ambiguous, "asks_questions": True, "service": True,
     },
     "slugify": {
         "title": "Quick test: a small function (cheapest first live test)",

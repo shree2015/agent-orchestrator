@@ -7,8 +7,10 @@ your wording only matters once a real model is behind the agents.
 
 > **What has and has not been tested.** The real client, the output contracts, the retry-with-feedback loop and all
 > the safety limits are tested against a *fake Anthropic server* that uses the same request and response format.
-> They have **not** been run against the live API from the environment this was built in. Expect to tune prompts
-> after your first live runs; the recording option below is how you capture what happened.
+> The author's first live runs with Sonnet exposed four gaps (a size limit the model was never told, a reviewer judging
+> blind, a rejection that halted instead of being fixed, and no Start button for a service structured differently from ours), all
+> fixed, and one full live run has since completed. One run is
+> not a measure of reliability: expect to tune prompts, and use the recording option below to capture what happened.
 
 > **Prefer buttons?** The same mock/real switch, key handling and requirement box are on the admin page:
 > `python -m orchestrator.admin` (see `docs/admin-page.md`).
@@ -124,7 +126,7 @@ recorded files: they show exactly what the model was asked and what it said, whi
 Real models are not deterministic, so two runs can differ.
 
 ## 7. Limits to state honestly
-* Not yet exercised against the live API in the build environment (see the note at the top).
+* Exercised live by the author, not from the build environment: one full run completed after four fixes (see the note at the top).
 * Quality depends on the model; the gates guarantee **conformance** (it parses, is safe, documented, tested), not that
   the design is the best one.
 * The mock remains the default so tests and demos stay offline, free and deterministic.

@@ -55,6 +55,48 @@ def start(a, run_id, **extra):
     return a.call("POST", "/api/service", {"run_id": run_id, **extra})
 
 
+# a service structured the way a real model structures it: classes and its own function names, not our reference's make_app / serve
+MODEL_STYLE = '''import sys
+from wsgiref.simple_server import make_server
+
+
+class Config:
+    port = 8000
+
+
+class App:
+    def __call__(self, environ, start_response):
+        start_response("200 OK", [("Content-Type", "application/json")])
+        return [b'{"status": "ok"}']
+
+
+def main(argv=None):
+    argv = argv if argv is not None else sys.argv
+    port = int(argv[1]) if len(argv) > 1 else Config.port
+    make_server("127.0.0.1", port, App()).serve_forever()
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+# the same, but the port is read as --port (a model may read "python implementation.py 8000" differently)
+ARGPARSE_STYLE = '''import argparse
+from wsgiref.simple_server import make_server
+
+
+def app(environ, start_response):
+    start_response("200 OK", [("Content-Type", "application/json")])
+    return [b'{"status": "ok"}']
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8000)
+    make_server("127.0.0.1", parser.parse_args().port, app).serve_forever()
+'''
+
+
 def fake_run(a, name, code, with_meta=None):
     """A run folder made by hand (as if from the command line, or edited afterwards)."""
     d = a.state.run_root / name
@@ -77,7 +119,8 @@ def test_only_runs_that_produced_a_runnable_service_are_offered_one(tmp_path):
     assert a.snap()["run"]["runnable"] is True
     detail = a.call("GET", f"/api/runs/{real_one}")[2]
     assert detail["runnable"] is True and detail["mode"] == "mock"
-    assert svc.is_runnable("def make_app(): pass\ndef serve(): pass\nif __name__ == '__main__':\n    serve()\n")
+    assert svc.is_runnable(MODEL_STYLE) and svc.is_runnable(shortener.GOOD_CODE)
+    assert not svc.is_runnable("def make_app(): pass\ndef serve(): pass\nif __name__ == '__main__':\n    serve()\n")     # our names alone prove nothing
     assert not svc.is_runnable("def slugify(text): return text\n")
 
 
@@ -170,7 +213,7 @@ def test_a_service_that_dies_is_reported_and_one_that_cannot_start_says_why(tmp_
     a.state.services._proc.wait()
     status = a.call("GET", "/api/service")[2]
     assert status["running"] is False and status["last_exit"]["exit_code"] != 0 and status["last_exit"]["run_id"]
-    boom = ("import sys\ndef make_app(): pass\ndef serve(): pass\nif __name__ == '__main__':\n"
+    boom = ("import sys\nfrom wsgiref.simple_server import make_server\ndef make_app(): pass\ndef serve(): pass\nif __name__ == '__main__':\n"
             "    print('boom: cannot bind', file=sys.stderr)\n    sys.exit(3)\n")
     run = fake_run(a, "run-boom", boom, {"mode": "mock"})
     code, _, res = start(a, run)
@@ -348,6 +391,63 @@ def test_an_admin_page_started_with_the_default_relative_runs_folder_can_start_a
         assert wait_closed(st["port"])
     finally:
         os.chdir(before)
+
+
+def test_the_reasons_a_file_is_not_offered_as_a_service_are_specific():
+    assert svc.why_not_runnable(MODEL_STYLE) is None
+    assert "no `if __name__" in svc.why_not_runnable("def slugify(t):\n    return t\n")
+    assert "no `if __name__" in svc.why_not_runnable("from wsgiref.simple_server import make_server\ndef run():\n    pass\n")
+    assert "does not appear to start a web server" in svc.why_not_runnable("if __name__ == '__main__':\n    print('hi')\n")
+    assert svc.is_runnable("if __name__ == \"__main__\":\n    HTTPServer(('127.0.0.1', 8000), H).serve_forever()\n")
+
+
+@with_clean_env
+def test_a_service_with_a_models_own_structure_is_offered_and_starts(tmp_path):
+    """Found on the first successful live run: the page offered no Start button, because 'runnable' meant 'defines make_app and serve'."""
+    a = Admin(tmp_path)
+    renamed = shortener.GOOD_CODE.replace("make_app", "build_application").replace("serve(", "run_server(")
+    assert "def make_app" not in renamed and "def serve(" not in renamed and "def run_server(" in renamed
+    for name, code, path in (("run-model-classes", MODEL_STYLE, ""), ("run-renamed-reference", renamed, "healthz")):
+        run = fake_run(a, name, code, {"mode": "real"})
+        assert a.state.runnable(run) and a.call("GET", f"/api/runs/{run}")[2]["runnable"] is True
+        assert start(a, run)[0] == 400                                                  # real-model code still needs the confirmation
+        status, _, st = start(a, run, confirm_unreviewed=True)
+        assert status == 200 and get(st["url"] + path) == (200, '{"status": "ok"}'), name       # it really answers over HTTP
+        assert a.call("DELETE", "/api/service")[2]["running"] is False and wait_closed(st["port"])
+
+
+@with_clean_env
+def test_a_program_that_reads_its_port_as_a_flag_is_started_on_the_second_try(tmp_path):
+    a = Admin(tmp_path)
+    run = fake_run(a, "run-argparse", ARGPARSE_STYLE, {"mode": "real"})
+    status, _, st = start(a, run, confirm_unreviewed=True)
+    assert status == 200 and get(st["url"])[0] == 200
+    log = (tmp_path / "runs" / run / "service" / "service.log").read_text(encoding="utf-8", errors="replace")
+    assert "unrecognized arguments" in log                                             # the first form was tried and refused
+    a.call("DELETE", "/api/service")
+
+
+@with_clean_env
+def test_an_unrelated_crash_is_not_retried_with_a_different_argument_form(tmp_path):
+    a = Admin(tmp_path)
+    boom = "import sys\nfrom wsgiref.simple_server import make_server\nif __name__ == '__main__':\n    print('boom: database is locked', file=sys.stderr)\n    sys.exit(3)\n"
+    run = fake_run(a, "run-crash", boom, {"mode": "mock"})
+    status, _, res = start(a, run)
+    assert status == 500 and "boom: database is locked" in res["error"]["message"]
+    assert (tmp_path / "runs" / run / "service" / "service.log").read_text(encoding="utf-8").count("boom: database is locked") == 1
+
+
+@with_clean_env
+def test_when_a_finished_service_run_cannot_be_started_the_page_says_why(tmp_path):
+    a = Admin(tmp_path)
+    run_id = shortener_run(a)
+    assert a.snap()["run"]["runnable"] is True and not any("cannot offer" in n for n in a.snap()["notes"])
+    (tmp_path / "runs" / run_id / "artifacts" / "implementation.py").write_text("def shorten(url):\n    return url\n", encoding="utf-8")
+    snap = a.snap()
+    assert snap["run"]["runnable"] is False
+    assert any("cannot offer to start it as a service" in n and "no `if __name__" in n and "python implementation.py 8000" in n for n in snap["notes"])
+    a.run()                                                                            # the toy scenario produces a function, not a service
+    assert not any("cannot offer" in n for n in a.finish()["notes"])
 
 
 def test_free_port_is_a_real_unused_loopback_port():

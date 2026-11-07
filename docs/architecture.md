@@ -1,6 +1,6 @@
 # Agent Orchestrator: architecture overview
 
-*Describes version <!--GEN:version-->0.8.0<!--/GEN-->. Companions: [architecture-reference.md](architecture-reference.md) (diagrams and tables generated from the code), [requirements-traceability.md](requirements-traceability.md), [policies.md](policies.md), and the decision records in [decisions/](decisions/).*
+*Describes version <!--GEN:version-->0.8.1<!--/GEN-->. Companions: [architecture-reference.md](architecture-reference.md) (diagrams and tables generated from the code), [requirements-traceability.md](requirements-traceability.md), [policies.md](policies.md), and the decision records in [decisions/](decisions/).*
 
 ## 1. What it is, and the principles behind it
 
@@ -246,7 +246,7 @@ Every agent calls one method, `complete(role, prompt) -> str`, so the model is s
 - **Real** (Anthropic Messages API, standard library only): each role has an **output contract** stating what its gates enforce; chat packaging (fences, preamble) is removed without altering clean artifacts; a retry carries the rejection reason and the previous output (a reviewer retry instead re-checks its own verdict against the request); a failed stage's last rejected output is kept for diagnosis; hard budgets on calls and output size; transient errors retried, authentication errors fatal; truncated answers rejected; every call logged (role, model, tokens, latency, prompt hash).
 - **Hybrid and recording**: send only chosen roles to the real model; record every prompt and response for debugging.
 
-The real-model path is tested through a fake Anthropic server with the same wire format; it has not been exercised against the live API in the build environment ([ADR 006](decisions/006-real-llm-integration.md)).
+The real-model path is tested through a fake Anthropic server with the same wire format; the author has since completed one full live run with Sonnet (the greenfield shortener, every gate and approval passed). One run is an existence proof, not a measure of reliability ([ADR 006](decisions/006-real-llm-integration.md)).
 
 ## 11. Key decisions and trade-offs
 
@@ -278,7 +278,7 @@ The real-model path is tested through a fake Anthropic server with the same wire
 
 ## 13. Limits and evolution
 
-- **Mock agents unless a real model is chosen:** the mock proves the governance, not generation quality; the real path is untested against the live API here.
+- **Mock agents unless a real model is chosen:** the mock proves the governance, not generation quality; the real path has had one complete live run (Sonnet), which is not a measure of reliability.
 - **State is in memory:** a crash loses a run in progress (finished runs are on disk). Crash-resume needs persisted state.
 - **Wave scheduling, one run at a time, one machine.**
 - **Review rework is bounded** (two rounds) and redoes only the stages downstream of the code: a flaw in the design or the plan halts the run.

@@ -3,7 +3,7 @@
 Governed, agentic software-engineering automation: a prototype that turns a requirement into a reviewable
 engineering outcome, with agents executing under explicit controls and humans owning approvals.
 
-**Version: v0.8.0 (all deliverables: orchestration, scenarios, admin page, documentation)**
+**Version: v0.8.1 (all deliverables: orchestration, scenarios, admin page, documentation)**
 
 ## What this version contains
 * **Orchestration engine** (`orchestrator/core`): explicit dependency graph with entry/exit gates, parallel branches
@@ -27,8 +27,8 @@ engineering outcome, with agents executing under explicit controls and humans ow
 * **`simple_graph/`:** a small LangGraph-style version of the same idea, useful for understanding the design.
 * Agents are an **offline mock LLM** by default (reviewed reference artifacts, no API key needed; the gates judge real
   code either way). A **real model** can be put behind any or all agents (`--llm anthropic`), with feedback on retries,
-  a hard call budget and token accounting; see `docs/real-llm.md`. Not yet exercised against the live API in the build
-  environment.
+  a hard call budget and token accounting; see `docs/real-llm.md`. The author has completed one full live run with Sonnet
+  (not from the build environment); see the note at the top of that guide for what that does and does not show.
 
 * **Scenario 3, ambiguous:** "make links expire sensibly": the vague request becomes structured questions; high-risk
   ones can only be answered by a human (no human, no guess: the run stops safely); decisions are validated, must
@@ -52,7 +52,7 @@ pip install -r requirements-dev.txt
 ```
 python -m pytest -v
 ```
-Expected: **no failures**. With Node.js 18+ and `langgraph` both installed that is 408 passed; without Node.js the 2 browser-script
+Expected: **no failures**. With Node.js 18+ and `langgraph` both installed that is 413 passed; without Node.js the 2 browser-script
 tests are skipped, without `langgraph` its 1 comparison test is skipped, and without the optional Mermaid command-line tool the
 1 diagram-rendering test is skipped. Two tests are skipped automatically (reported as skipped, not failed) if an optional
 tool is missing: the LangGraph comparison needs `pip install langgraph`, and the real-browser-logic UI test needs

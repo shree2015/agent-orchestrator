@@ -8,8 +8,12 @@ generated code with the user's own permissions, outside the test sandbox. For th
 for output written by a real model, the pipeline's gates catch many unsafe patterns but are not a guarantee.
 
 ## Decision
-1. **The button only exists for runs that produced a runnable service** (the implementation defines `make_app` and `serve`
-   and can start as a script). A toy-function run gets no button.
+1. **The button only exists for runs that produced a runnable service**: an implementation that can be started as a program and
+   starts a web server (an `if __name__ == "__main__":` block and use of `wsgiref` or `http.server`). A toy-function run gets no button.
+   The check looks at *behaviour*, never at the function names a particular implementation chose. (It first required our reference's
+   `make_app` and `serve`, so the first successful live run, whose service was structured differently, got no Start button. When a
+   service run cannot be started the page now says why. If the program reads its port as `--port N` instead of the positional port
+   the requirement template specifies, the launcher tries that form once.)
 2. **Loopback is enforced, not requested.** The service is started through a small wrapper that rewrites every `bind()` to
    127.0.0.1 (or ::1) inside the child process, so generated code that asks for `0.0.0.0` still listens only on this machine.
    A test inspects the real listening socket.

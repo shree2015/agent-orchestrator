@@ -1,6 +1,6 @@
 # Requirements traceability
 
-*Maps every item of the assignment brief to the code that implements it, the evidence that checks it, and an honest status. Version <!--GEN:version-->0.8.0<!--/GEN-->. See [architecture.md](architecture.md) for the design and [testing.md](testing.md) for the test approach. A test checks that every file named here exists.*
+*Maps every item of the assignment brief to the code that implements it, the evidence that checks it, and an honest status. Version <!--GEN:version-->0.8.1<!--/GEN-->. See [architecture.md](architecture.md) for the design and [testing.md](testing.md) for the test approach. A test checks that every file named here exists.*
 
 **Status key:** **Met**: implemented and tested. **Met, with limits**: implemented and tested, with a stated limitation. **Partial**: some of it. **Pending**: not done yet.
 
@@ -51,7 +51,7 @@
 | Effectiveness of agentic orchestration | Section 2 above; [architecture.md](architecture.md) sections 4 and 5; `tests/test_core.py`, `tests/test_resilience.py`, `tests/test_replan.py` |
 | Architecture and system design quality | [architecture.md](architecture.md) (layers, injected dependencies, trust boundaries); [decisions/](decisions/) |
 | Depth of decomposition and execution quality | the `plan` stage and its policies; the three scenarios |
-| Realism and quality of outputs | `orchestrator/workflows/reference/shortener/shortener.py.txt` and its tests; the real-model path in [real-llm.md](real-llm.md) (tested against a fake API only) |
+| Realism and quality of outputs | `orchestrator/workflows/reference/shortener/shortener.py.txt` and its tests; the real-model path in [real-llm.md](real-llm.md) (tested against a fake API, plus one complete live run by the author) |
 | Validation and risk management rigour | [policies.md](policies.md); `tests/test_policies.py`; mutation checks recorded in [ai-usage-log.md](ai-usage-log.md); [testing.md](testing.md) |
 | Clarity and defensibility of decisions | the decision table in [architecture.md](architecture.md) section 11 and the nine ADRs in [decisions/](decisions/) |
 | Modular, testable, reliable, secure, scalable code with safe change management | injected dependencies; over 350 tests; the resilience ladder; named policies and trust boundaries; change control and re-plan rollback. **Scalable:** see the limits below |
@@ -59,7 +59,7 @@
 
 ## 5. Known gaps, stated plainly
 
-- **The real-model path has not been run against the live API.** It is tested through a fake server with the same wire format; the first live runs are expected to need prompt tuning.
+- **The real-model path has had one complete live run, not a measurement.** The author's first live runs (Sonnet) exposed four gaps, now fixed, and a full run has since completed. It is otherwise tested through a fake server with the same wire format; expect prompt tuning.
 - **No machine-readable API definition** (OpenAPI); the API and schema are documented in prose and tables and in the code.
 - **Scalability is a prototype's:** one machine, SQLite, wave scheduling, run state in memory (no crash-resume). The design keeps these behind clear boundaries, and [architecture.md](architecture.md) section 13 lists the next steps.
 - **Static analysis only** for security and compliance checks.

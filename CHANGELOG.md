@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.8.1 - the Start button for a real model's own code (found on the first successful live run)
+
+### Fixed
+- **After a successful run with Sonnet, the admin page offered no way to start the service.** The check for "runnable" required the literal
+  function names `make_app` and `serve` (our reference service's internals), but the requirement template only asks for a program started
+  with `python implementation.py 8000` that serves `ui.html`. Sonnet structured its service its own way, so the panel never appeared.
+  "Runnable" now means *behaviour*: an `if __name__ == "__main__":` block and a web server being started.
+
+### Added
+- When a finished service run cannot be started, the page says why (no `__main__` block, or no web server) and how to run it by hand.
+- If a program dies at start-up complaining about its arguments, the launcher tries `--port N` once (the template asks for a positional
+  port, but a model may read it differently). `PORT` is also set in the child's environment. Any other crash is reported, not retried.
+- 5 tests (a model-style service, the same code under different names, the `--port` form, an unrelated crash, the explanatory note).
+
+### Changed
+- The documents now record the live result honestly: one complete live run of the greenfield shortener with Sonnet (every gate and
+  approval passed), after four fixes. One run is an existence proof, not a measure of reliability.
+
+
 ## v0.8.0 - review findings are sent back for rework (found on the second live run)
 
 ### Fixed (test only, found on the author's Windows run)
