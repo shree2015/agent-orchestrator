@@ -145,9 +145,27 @@ const nodeBadges = () => findAll(ids.nodes, (n) => /^badge /.test(n.className)).
   await until(() => /^Stopped by you/.test(banner()), 'the run to stop');
   check('stopping releases the waiting decision and says why', pending().length === 0 && /stopped by the operator/.test(banner()), banner());
 
+  // ---- size limits (change control)
+  ids.scenario.value = 'shortener'; fire(ids.scenario, 'change');
+  check('the size limits are offered with their defaults for the shortener',
+        ids['limits-box'].hidden === false && ids['limit-code'].value === '900' && ids['limit-ui'].value === '700', ids['limit-code'].value + '/' + ids['limit-ui'].value);
+  type(ids['limit-code'], '1200');
+  check('raising a limit says it is recorded in the audit log', /Raised above the default for: code/.test(ids['limit-hint'].textContent) && /audit log/.test(ids['limit-hint'].textContent), ids['limit-hint'].textContent);
+  type(ids['limit-code'], '80');
+  if (!ids['auto-approve'].checked) click(ids['auto-approve']);
+  let beforeLimit = runId();
+  fire(ids['run-form'], 'submit');
+  await until(() => runId() !== beforeLimit && /^Halted/.test(banner()), 'the run to halt on the size limit');
+  check('a size limit stops the run and the banner says which limit', /limit is 80/.test(banner()), banner());
+  check('the page tells the operator how to continue', /Size limits/.test(ids.notes.textContent) && /recorded in the audit log/.test(ids.notes.textContent), ids.notes.textContent);
+  ids.scenario.value = 'slugify'; fire(ids.scenario, 'change');
+  check('the toy scenario offers only a code limit', ids['limits-box'].hidden === false && ids['limit-ui-wrap'].hidden === true && ids['limit-code'].value === '200');
+  ids.scenario.value = 'ambiguous'; fire(ids.scenario, 'change');
+  check('the ambiguous scenario has fixed limits, so none are offered', ids['limits-box'].hidden === true);
+
   // ---- the ambiguous scenario: questions, then changing an answer
   ids.scenario.value = 'ambiguous'; fire(ids.scenario, 'change');
-  click(ids['auto-approve']);                                  // auto-approve on: only the high-risk question needs us
+  if (!ids['auto-approve'].checked) click(ids['auto-approve']);   // auto-approve on: only the high-risk question needs us
   fire(ids['run-form'], 'submit');
   await until(() => pending().length === 1 && /Question \(high risk\)/.test(pending()[0].textContent), 'the high-risk question');
   card = pending()[0];

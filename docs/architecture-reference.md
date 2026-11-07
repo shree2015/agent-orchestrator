@@ -31,23 +31,24 @@ flowchart TD
   review --> release
   requirements --> plan
   implementation --> ui
+  review -.->|"rework"| implementation
   classDef approval fill:#fff3cd,stroke:#9a6700,color:#000
   classDef code fill:#e7f0ff,stroke:#2557d6,color:#000
   class design,release approval
   class implementation,ui code
 ```
 
-*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted).*
+*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted); the dashed arrow is a rejection sent back for rework.*
 
-| Stage | Agent | Entry controls | Exit controls (every one must pass) | Approval |
+| Stage | Agent | Entry controls | Exit controls (every one must pass) | Human / rework |
 |---|---|---|---|---|
 | `requirements` | requirements | - | json_has_keys(goal, functional, ambiguities, acceptance) | - |
-| `design` | architect | require_inputs(requirements) | - | human |
+| `design` | architect | require_inputs(requirements) | - | human approval |
 | `implementation` | developer (+ developer_fallback) | - | valid_python<br/>security/no-hardcoded-secrets<br/>security/no-dangerous-calls<br/>security/no-unsafe-imports<br/>security/dependency-allowlist<br/>compliance/public-api-documented<br/>change_control/max-files-changed<br/>change_control/max-lines-changed<br/>change_control/protected-paths<br/>change_control/no-file-deletion | - |
 | `tests` | tester | - | valid_python<br/>tests_pass_against_implementation<br/>compliance/minimum-tests<br/>compliance/traceability-evidence-exists | - |
 | `docs` | doc_writer | - | compliance/docs-cover-public-api | - |
-| `review` | reviewer | - | reviewer_approves | - |
-| `release` | release_manager | compliance/release-evidence | - | human |
+| `review` | reviewer | - | reviewer_approves | rejection sent back to `implementation` |
+| `release` | release_manager | compliance/release-evidence | - | human approval |
 | `plan` | planner | - | compliance/plan-well-formed<br/>compliance/plan-maps-to-workflow<br/>compliance/plan-sequencing-matches-graph<br/>compliance/acceptance-criteria-traced | - |
 | `ui` | frontend | - | security/no-hardcoded-secrets<br/>security/ui-no-external-resources<br/>security/ui-no-unsafe-dom-sinks<br/>security/ui-no-inline-event-handlers<br/>security/ui-no-inline-style-attributes<br/>security/ui-csp-compatible-blocks<br/>compliance/ui-uses-documented-api<br/>compliance/ui-accessibility-basics<br/>change_control/max-files-changed<br/>change_control/max-lines-changed<br/>change_control/protected-paths<br/>change_control/no-file-deletion | - |
 
@@ -71,24 +72,25 @@ flowchart TD
   tests --> review
   docs --> review
   review --> release
+  review -.->|"rework"| implementation
   classDef approval fill:#fff3cd,stroke:#9a6700,color:#000
   classDef code fill:#e7f0ff,stroke:#2557d6,color:#000
   class design,release approval
   class implementation code
 ```
 
-*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted).*
+*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted); the dashed arrow is a rejection sent back for rework.*
 
-| Stage | Agent | Entry controls | Exit controls (every one must pass) | Approval |
+| Stage | Agent | Entry controls | Exit controls (every one must pass) | Human / rework |
 |---|---|---|---|---|
 | `requirements` | requirements | - | json_has_keys(goal, functional, ambiguities, acceptance) | - |
 | `impact_analysis` | analyst | - | json_has_keys(impacted, root_cause, risks)<br/>compliance/impact-analysis-grounded | - |
-| `design` | architect | require_inputs(requirements, impact_analysis) | - | human |
+| `design` | architect | require_inputs(requirements, impact_analysis) | - | human approval |
 | `implementation` | developer (+ developer_fallback) | - | valid_python<br/>security/no-hardcoded-secrets<br/>security/no-dangerous-calls<br/>security/no-unsafe-imports<br/>security/dependency-allowlist<br/>compliance/public-api-documented<br/>change_control/max-files-changed<br/>change_control/max-lines-changed<br/>change_control/protected-paths<br/>change_control/no-file-deletion<br/>change_control/public-api-stable<br/>change_control/change-within-declared-impact | - |
 | `tests` | tester | - | valid_python<br/>tests_pass_against_implementation<br/>compliance/minimum-tests<br/>compliance/no-tests-removed<br/>compliance/regression-test-reproduces-bug | - |
 | `docs` | doc_writer | - | compliance/changelog-references-ticket | - |
-| `review` | reviewer | - | reviewer_approves | - |
-| `release` | release_manager | compliance/release-evidence | - | human |
+| `review` | reviewer | - | reviewer_approves | rejection sent back to `implementation` |
+| `release` | release_manager | compliance/release-evidence | - | human approval |
 
 ### 1.3 Ambiguous: "make links expire sensibly"
 
@@ -115,26 +117,27 @@ flowchart TD
   tests --> review
   docs --> review
   review --> release
+  review -.->|"rework"| implementation
   classDef approval fill:#fff3cd,stroke:#9a6700,color:#000
   classDef code fill:#e7f0ff,stroke:#2557d6,color:#000
   class design,release approval
   class implementation code
 ```
 
-*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted).*
+*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted); the dashed arrow is a rejection sent back for rework.*
 
-| Stage | Agent | Entry controls | Exit controls (every one must pass) | Approval |
+| Stage | Agent | Entry controls | Exit controls (every one must pass) | Human / rework |
 |---|---|---|---|---|
 | `requirements` | requirements | - | json_has_keys(goal, functional, ambiguities, acceptance) | - |
 | `clarifications` | clarifier | - | compliance/decisions-cover-ambiguities<br/>compliance/high-risk-needs-human<br/>compliance/answers-within-options<br/>compliance/assumptions-have-rationale<br/>compliance/decisions-consistent | - |
 | `impact_analysis` | analyst | - | json_has_keys(impacted, root_cause, risks)<br/>compliance/impact-analysis-grounded | - |
 | `plan` | planner | - | compliance/plan-well-formed<br/>compliance/plan-maps-to-workflow<br/>compliance/plan-sequencing-matches-graph<br/>compliance/acceptance-criteria-traced | - |
-| `design` | architect | require_inputs(requirements, impact_analysis, clarifications) | - | human |
+| `design` | architect | require_inputs(requirements, impact_analysis, clarifications) | - | human approval |
 | `implementation` | developer (+ developer_fallback) | - | valid_python<br/>security/no-hardcoded-secrets<br/>security/no-dangerous-calls<br/>security/no-unsafe-imports<br/>security/dependency-allowlist<br/>compliance/public-api-documented<br/>change_control/max-files-changed<br/>change_control/max-lines-changed<br/>change_control/protected-paths<br/>change_control/no-file-deletion<br/>change_control/public-api-stable<br/>change_control/change-within-declared-impact<br/>compliance/implementation-honours-decisions | - |
 | `tests` | tester | - | valid_python<br/>tests_pass_against_implementation<br/>compliance/minimum-tests<br/>compliance/no-tests-removed<br/>compliance/regression-test-reproduces-bug<br/>compliance/traceability-evidence-exists | - |
 | `docs` | doc_writer | - | compliance/changelog-references-ticket | - |
-| `review` | reviewer | - | reviewer_approves | - |
-| `release` | release_manager | compliance/release-evidence | - | human |
+| `review` | reviewer | - | reviewer_approves | rejection sent back to `implementation` |
+| `release` | release_manager | compliance/release-evidence | - | human approval |
 
 ### 1.4 Toy: a small function (the cheapest real-model test)
 
@@ -154,23 +157,24 @@ flowchart TD
   tests --> review
   docs --> review
   review --> release
+  review -.->|"rework"| implementation
   classDef approval fill:#fff3cd,stroke:#9a6700,color:#000
   classDef code fill:#e7f0ff,stroke:#2557d6,color:#000
   class design,release approval
   class implementation code
 ```
 
-*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted).*
+*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted); the dashed arrow is a rejection sent back for rework.*
 
-| Stage | Agent | Entry controls | Exit controls (every one must pass) | Approval |
+| Stage | Agent | Entry controls | Exit controls (every one must pass) | Human / rework |
 |---|---|---|---|---|
 | `requirements` | requirements | - | json_has_keys(goal, functional, ambiguities, acceptance) | - |
-| `design` | architect | require_inputs(requirements) | - | human |
+| `design` | architect | require_inputs(requirements) | - | human approval |
 | `implementation` | developer (+ developer_fallback) | - | valid_python<br/>security/no-hardcoded-secrets<br/>security/no-dangerous-calls<br/>security/no-unsafe-imports<br/>security/dependency-allowlist<br/>compliance/public-api-documented<br/>change_control/max-files-changed<br/>change_control/max-lines-changed<br/>change_control/protected-paths<br/>change_control/no-file-deletion | - |
 | `tests` | tester | - | valid_python<br/>tests_pass_against_implementation<br/>compliance/minimum-tests | - |
 | `docs` | doc_writer | - | compliance/docs-cover-public-api | - |
-| `review` | reviewer | - | reviewer_approves | - |
-| `release` | release_manager | compliance/release-evidence | - | human |
+| `review` | reviewer | - | reviewer_approves | rejection sent back to `implementation` |
+| `release` | release_manager | compliance/release-evidence | - | human approval |
 
 ## 2. Policy catalogue (discovered from the code)
 
@@ -240,7 +244,9 @@ Every event is a record in the hash-chained `audit.jsonl`; all metrics and the l
 | `revision` | engine | node, by, reason, old, new | an upstream output was replaced (e.g. a human changed an answer); records old and new fingerprints |
 | `revision_noop` | engine | node, by, reason, fingerprint | an identical revision: nothing to redo |
 | `revision_rejected` | engine | trigger, reason, why | a revision failed a gate or approval and was refused |
+| `rework` | engine | node, target, granted, round, of, findings, redo, why | a reviewer rejected the work: its findings are sent back and the producing stages redone (granted), or refused because the budget is spent |
 | `rollback` | engine | reason, trigger_nodes, restored | a failed change was reverted to its checkpoint |
+| `run_config` | runner | config | the operator's settings for this run (mode, model, size limits): recorded first, and never contains secrets |
 | `run_finished` | engine | status, halt_reason, latency_s, states | a run() call ended; carries status, halt reason, latency and final states |
 | `run_started` | engine | pending | a run() call begins; lists the nodes still pending |
 | `safe_stop` | engine | reason | the run stops starting new work; the first reason wins |
@@ -255,6 +261,7 @@ Definitions (from the metrics module itself):
 - fallbacks          - times a node's retries were exhausted and its fallback agent was engaged
 - rollbacks          - times a failed change set was reverted to its last good checkpoint
 - replans            - times an upstream change invalidated downstream nodes
+- reworks            - times a reviewer's rejection was sent back to the stages that produced the work (reworks_refused: budget spent)
 - node_success_rate  - nodes in state DONE at the end of the run / total nodes
 - mttr_s             - mean time from a node's first failed attempt to its next successful commit
 - policy_violations  - how often each named policy ("category/policy-id") blocked an output
@@ -265,4 +272,35 @@ Definitions (from the metrics module itself):
 - nodes_replanned    - total nodes invalidated by re-plans (the rework a change cost)
 - end_to_end_latency_s - wall-clock duration of the LAST run() call
 
-Every value returned by `compute()`: `run_status`, `run_success`, `node_success_rate`, `end_to_end_latency_s`, `failed_attempts`, `retries`, `fallbacks`, `rollbacks`, `replans`, `changes_rejected`, `llm_calls`, `llm_input_tokens`, `llm_output_tokens`, `revisions`, `revision_noops`, `revisions_rejected`, `auto_replans`, `nodes_replanned`, `approvals_requested`, `approvals_denied`, `policy_gate_failures`, `policy_violations`, `mttr_s`, `halt_reason`.
+Every value returned by `compute()`: `run_status`, `run_success`, `node_success_rate`, `end_to_end_latency_s`, `failed_attempts`, `retries`, `fallbacks`, `rollbacks`, `replans`, `reworks`, `reworks_refused`, `changes_rejected`, `llm_calls`, `llm_input_tokens`, `llm_output_tokens`, `revisions`, `revision_noops`, `revisions_rejected`, `auto_replans`, `nodes_replanned`, `approvals_requested`, `approvals_denied`, `policy_gate_failures`, `policy_violations`, `mttr_s`, `halt_reason`.
+
+## 5. Scripted fault scenarios and what stops each
+
+Each fault is injected into one agent's output and the workflow is run for real (mock agents). A *recoverable* fault is that agent's first answer only; a *persistent* one repeats, so the control must hold and the run must halt safely.
+
+| Workflow | Injected fault | Stage | Stopped by | Outcome |
+|---|---|---|---|---|
+| greenfield | `secret` | `implementation` | `security/no-hardcoded-secrets`, `security/no-hardcoded-secrets` | recovered after one retry |
+| greenfield | `import` | `implementation` | `security/dependency-allowlist` | recovered after one retry |
+| greenfield | `undocumented` | `implementation` | `compliance/public-api-documented` | recovered after one retry |
+| greenfield | `thin-tests` | `tests` | `compliance/minimum-tests`, `compliance/traceability-evidence-exists`, `compliance/traceability-evidence-exists`, `compliance/traceability-evidence-exists`, `compliance/traceability-evidence-exists`, `compliance/traceability-evidence-exists`, `compliance/traceability-evidence-exists`, `compliance/traceability-evidence-exists`, `compliance/traceability-evidence-exists`, `compliance/traceability-evidence-exists` | halted safely (the fault repeats) |
+| greenfield | `empty-docs` | `docs` | `compliance/docs-cover-public-api` | halted safely (the fault repeats) |
+| greenfield | `ui-innerhtml` | `ui` | `security/ui-no-unsafe-dom-sinks` | recovered after one retry |
+| greenfield | `ui-cdn` | `ui` | `security/ui-no-external-resources`, `security/ui-csp-compatible-blocks` | recovered after one retry |
+| greenfield | `ui-unlabelled` | `ui` | `compliance/ui-accessibility-basics` | recovered after one retry |
+| greenfield | `plan-cycle` | `plan` | `compliance/plan-well-formed`, `compliance/plan-sequencing-matches-graph` | recovered after one retry |
+| greenfield | `plan-misses-criterion` | `plan` | `compliance/acceptance-criteria-traced` | recovered after one retry |
+| greenfield | `plan-wrong-order` | `plan` | `compliance/plan-sequencing-matches-graph` | recovered after one retry |
+| brownfield | `scope-creep` | `implementation` | `change_control/change-within-declared-impact` | recovered after one retry |
+| brownfield | `api-break` | `implementation` | `change_control/public-api-stable`, `change_control/change-within-declared-impact` | recovered after one retry |
+| brownfield | `ungrounded-impact` | `impact_analysis` | `compliance/impact-analysis-grounded` | recovered after one retry |
+| brownfield | `no-regression-test` | `tests` | `compliance/regression-test-reproduces-bug` | recovered after one retry |
+| brownfield | `drop-tests` | `tests` | `compliance/no-tests-removed` | recovered after one retry |
+| brownfield | `changelog-no-ticket` | `docs` | `compliance/changelog-references-ticket` | recovered after one retry |
+| ambiguous | `ignores-decision` | `implementation` | `compliance/implementation-honours-decisions` | recovered after one retry |
+| ambiguous | `scope-creep` | `implementation` | `change_control/change-within-declared-impact` | recovered after one retry |
+| ambiguous | `untraced-tests` | `tests` | `compliance/traceability-evidence-exists` | recovered after one retry |
+| ambiguous | `changelog-no-ticket` | `docs` | `compliance/changelog-references-ticket` | recovered after one retry |
+| ambiguous | `plan-cycle` | `plan` | `compliance/plan-well-formed`, `compliance/plan-sequencing-matches-graph` | recovered after one retry |
+| ambiguous | `plan-misses-criterion` | `plan` | `compliance/acceptance-criteria-traced` | recovered after one retry |
+| ambiguous | `plan-wrong-order` | `plan` | `compliance/plan-sequencing-matches-graph` | recovered after one retry |

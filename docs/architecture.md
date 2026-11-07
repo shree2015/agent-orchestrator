@@ -1,6 +1,6 @@
 # Agent Orchestrator: architecture overview
 
-*Describes version 0.6.0. Companions: [architecture-reference.md](architecture-reference.md) (diagrams and tables generated from the code), [requirements-traceability.md](requirements-traceability.md), [policies.md](policies.md), and the decision records in [decisions/](decisions/).*
+*Describes version <!--GEN:version-->0.8.0<!--/GEN-->. Companions: [architecture-reference.md](architecture-reference.md) (diagrams and tables generated from the code), [requirements-traceability.md](requirements-traceability.md), [policies.md](policies.md), and the decision records in [decisions/](decisions/).*
 
 ## 1. What it is, and the principles behind it
 
@@ -54,6 +54,8 @@ Dependencies point downward. The engine imports nothing outside itself: agents, 
 **Scheduling.** The engine runs in **waves**: every node whose dependencies are done runs in parallel in a thread pool (4 workers by default), the wave ends at a barrier, and the next wave is computed. Agents see a read-only snapshot of committed outputs; commits happen under a lock. This keeps behaviour deterministic and easy to audit, at the cost of a slow node delaying its siblings' successors (section 11).
 
 **One node, end to end.** A node runs its entry gates, then agent attempts judged by its exit gates, then a human approval if it needs one, then commits (picture below). When something fails, the **resilience ladder** applies: retry (bounded, 2 retries by default, optional exponential backoff, with the rejection fed back to the agent), then fallback (a different agent, judged by the *same* gates; a node without one fails here), then safe-stop (first reason wins; a global budget of 50 attempts bounds the whole run), then rollback of any in-flight change. Node states: `PENDING`, `RUNNING`, `AWAITING_APPROVAL`, `DONE`, `FAILED`, `REJECTED`, `SKIPPED`, `ROLLED_BACK`. A run ends `COMPLETED` or `HALTED`.
+
+**A verdict is not a malformed answer.** When the rejected output is a reviewer's REJECT, retrying the same reviewer fixes nothing: the findings belong to the work it judged. The engine sends them back (a *rework*): the code stage and everything downstream are redone, each producing stage told the findings and shown its own previous output, and the review runs again. It is bounded (two rounds by default, then the run halts), checkpointed (a rework that fails is rolled back whole) and audited ([ADR 009](decisions/009-review-driven-rework.md)).
 
 **A worked example, from a real run.** The developer agent's first answer leaks an API key. The security gate rejects it *by name*, the rejection is fed back, the retry passes, and the unsafe version is never committed or seen by any downstream stage. This block is produced by actually running the workflow:
 
@@ -131,14 +133,14 @@ Beyond the policies, the architecture has four structural guarantees:
 Every control on every stage of the greenfield workflow, read from the real graph (the other workflows are in the reference):
 
 <!-- BEGIN GENERATED: controls-shortener -->
-| Stage | Controls that must pass | Human |
+| Stage | Controls that must pass | Human / rework |
 |---|---|---|
 | `requirements` | json_has_keys(goal, functional, ambiguities, acceptance) | - |
 | `design` | entry: require_inputs(requirements) | approval |
 | `implementation` | valid_python, no-hardcoded-secrets, no-dangerous-calls, no-unsafe-imports, dependency-allowlist, public-api-documented, max-files-changed, max-lines-changed, protected-paths, no-file-deletion | - |
 | `tests` | valid_python, tests_pass_against_implementation, minimum-tests, traceability-evidence-exists | - |
 | `docs` | docs-cover-public-api | - |
-| `review` | reviewer_approves | - |
+| `review` | reviewer_approves | sends rejections back to `implementation` |
 | `release` | entry: release-evidence | approval |
 | `plan` | plan-well-formed, plan-maps-to-workflow, plan-sequencing-matches-graph, acceptance-criteria-traced | - |
 | `ui` | no-hardcoded-secrets, ui-no-external-resources, ui-no-unsafe-dom-sinks, ui-no-inline-event-handlers, ui-no-inline-style-attributes, ui-csp-compatible-blocks, ui-uses-documented-api, ui-accessibility-basics, max-files-changed, max-lines-changed, protected-paths, no-file-deletion | - |
@@ -179,7 +181,7 @@ flowchart TB
 
 ## 8. Observability and audit
 
-Every significant step is an **event** in `audit.jsonl`: <!--GEN:events-->22<!--/GEN--> event types, catalogued in the reference. Each record carries a sequence number and the hash of the previous record (sha256), so the log is a **tamper-evident chain**: `AuditLog.verify` recomputes it, and the admin page offers the check. It detects any edit; it is not tamper-*proof*, because someone who rewrote the whole chain could not be caught without anchoring the final hash elsewhere (a production step).
+Every significant step is an **event** in `audit.jsonl`: <!--GEN:events-->24<!--/GEN--> event types, catalogued in the reference. Each record carries a sequence number and the hash of the previous record (sha256), so the log is a **tamper-evident chain**: `AuditLog.verify` recomputes it, and the admin page offers the check. It detects any edit; it is not tamper-*proof*, because someone who rewrote the whole chain could not be caught without anchoring the final hash elsewhere (a production step).
 
 Metrics are derived *only* from these events, never kept separately. The ones the brief names:
 
@@ -226,13 +228,14 @@ flowchart LR
   review --> release
   requirements --> plan
   implementation --> ui
+  review -.->|"rework"| implementation
   classDef approval fill:#fff3cd,stroke:#9a6700,color:#000
   classDef code fill:#e7f0ff,stroke:#2557d6,color:#000
   class design,release approval
   class implementation,ui code
 ```
 
-*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted).*
+*Hexagons need a human approval; blue boxes produce code and carry a security gate; the arrows are dependencies (redundant ones omitted); the dashed arrow is a rejection sent back for rework.*
 <!-- END GENERATED: graph-shortener -->
 
 ## 10. Agents and the LLM layer
@@ -240,7 +243,7 @@ flowchart LR
 Every agent calls one method, `complete(role, prompt) -> str`, so the model is swappable without touching workflows.
 
 - **Mock** (default): returns stored, reviewed artifacts per role. It can inject failures and scripted policy violations, and its answers can be functions of the prompt, so changing a human's answer genuinely changes the generated design, code and tests.
-- **Real** (Anthropic Messages API, standard library only): each role has an **output contract** stating what its gates enforce; chat packaging (fences, preamble) is removed without altering clean artifacts; a retry carries the rejection reason and the previous output; hard budgets on calls and output size; transient errors retried, authentication errors fatal; truncated answers rejected; every call logged (role, model, tokens, latency, prompt hash).
+- **Real** (Anthropic Messages API, standard library only): each role has an **output contract** stating what its gates enforce; chat packaging (fences, preamble) is removed without altering clean artifacts; a retry carries the rejection reason and the previous output (a reviewer retry instead re-checks its own verdict against the request); a failed stage's last rejected output is kept for diagnosis; hard budgets on calls and output size; transient errors retried, authentication errors fatal; truncated answers rejected; every call logged (role, model, tokens, latency, prompt hash).
 - **Hybrid and recording**: send only chosen roles to the real model; record every prompt and response for debugging.
 
 The real-model path is tested through a fake Anthropic server with the same wire format; it has not been exercised against the live API in the build environment ([ADR 006](decisions/006-real-llm-integration.md)).
@@ -255,6 +258,7 @@ The real-model path is tested through a fake Anthropic server with the same wire
 | Declare the blast radius, then enforce it | Deterministic, explainable scope control in existing code | trusting a reviewer agent; line-based diffs | [ADR 003](decisions/003-brownfield-declare-then-enforce.md) |
 | Fingerprint re-planning | Minimal, explainable rework with no manual switch | always redo everything | [ADR 004](decisions/004-fingerprint-based-replanning.md) |
 | Humans decide by risk | Keeps people on the decisions that matter | block on every ambiguity; let the model ask freely | [ADR 005](decisions/005-human-decisions-and-traceability.md) |
+| Review findings drive bounded rework | A real model's first draft usually has some defect; halting at the first rejection cannot converge | halt on the first rejection; retry the reviewer | [ADR 009](decisions/009-review-driven-rework.md) |
 | Real LLM behind the same interface | Same governance applies unchanged | an SDK-specific integration | [ADR 006](decisions/006-real-llm-integration.md) |
 | Thin local admin page; launch with enforced limits | One window for the demo without new logic or dependencies | a framework and front-end build; a container | [ADR 007](decisions/007-admin-page.md), [ADR 008](decisions/008-launching-generated-services.md) |
 | Wave scheduler with a barrier | Simple, deterministic, easy to audit | an event-driven scheduler (a slow node would no longer delay unrelated successors) | this document |
@@ -277,6 +281,7 @@ The real-model path is tested through a fake Anthropic server with the same wire
 - **Mock agents unless a real model is chosen:** the mock proves the governance, not generation quality; the real path is untested against the live API here.
 - **State is in memory:** a crash loses a run in progress (finished runs are on disk). Crash-resume needs persisted state.
 - **Wave scheduling, one run at a time, one machine.**
+- **Review rework is bounded** (two rounds) and redoes only the stages downstream of the code: a flaw in the design or the plan halts the run.
 - **The test sandbox is an isolated subprocess, not a container;** launched services run with the user's permissions (hence the confirmation).
 - **Static analysis only** (AST and patterns): it raises the bar but does not replace a real SAST tool or review.
 - **Audit chain is tamper-evident, not tamper-proof** without external anchoring.

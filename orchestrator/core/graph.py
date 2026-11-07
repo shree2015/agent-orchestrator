@@ -33,6 +33,17 @@ class GraphError(ValueError):
 
 
 @dataclass(frozen=True)
+class Rework:
+    """What to do when a node ends in REJECTION and that rejection is a *verdict about earlier work* (a reviewer's findings).
+
+    The engine sends the findings back to the stages that produced the work: `target` and everything downstream of it are redone,
+    each producing agent told what was found. Bounded by the engine's `max_reworks`.
+    """
+    target: str                                              # redo this node and everything that depends on it
+    when: Callable[[str], bool] = lambda text: True          # is the rejected output a real verdict (not a malformed answer)?
+
+
+@dataclass(frozen=True)
 class Node:
     id: str
     agent: str                                   # key into the engine's agent registry
@@ -45,6 +56,7 @@ class Node:
     fallback_attempts: int = 1                   # attempts granted to the fallback agent
     description: str = ""
     tags: tuple[str, ...] = ()                   # governance tags: "high_impact", "code", "release"
+    rework: Rework | None = None                 # a rejection here is a verdict on earlier work: send it back (bounded)
 
 
 @dataclass
@@ -66,6 +78,9 @@ class Graph:
                 if dep not in self.nodes:
                     raise GraphError(f"{n.id} depends on unknown node '{dep}'")
         self.topological_order()  # raises on cycle
+        for n in self.nodes.values():
+            if n.rework is not None and n.rework.target not in self.ancestors(n.id):
+                raise GraphError(f"{n.id} sends work back to '{n.rework.target}', which is not upstream of it")
 
     def topological_order(self) -> list[str]:
         """Kahn's algorithm; raises GraphError if a cycle exists."""

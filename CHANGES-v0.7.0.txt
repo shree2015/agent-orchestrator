@@ -1,0 +1,30 @@
+PATCH v0.6.0 -> v0.7.0: final engineering summary (requirement 8), generated evidence, usage-log attribution
+
+APPLY (your project must be at v0.6.0): extract into the PARENT of your 'agent-orchestrator' folder and allow overwrite
+(or copy the zip's 'agent-orchestrator' folder contents into your repo). Then:  python -m pytest -v   -> expect NO failures
+(377 passed with Node.js, langgraph and the optional Mermaid CLI installed; without them 1-4 tests show as skipped, which is fine)
+Then run verify_v0.7.0.py (kept OUTSIDE the repo) to confirm your folder is exactly v0.7.0.
+Read first: docs/final-summary.md (or docs/final-summary.pdf)
+
+git status afterwards should show exactly 2 new files and 12 modified files.
+
+NEW (2):
+  + docs/final-summary.md
+  + docs/final-summary.pdf
+
+MODIFIED (12):
+  ~ CHANGELOG.md
+  ~ README.md
+  ~ docs/ai-usage-log.md
+  ~ docs/architecture-reference.md
+  ~ docs/architecture.md
+  ~ docs/architecture.pdf
+  ~ docs/requirements-traceability.md
+  ~ docs/requirements-traceability.pdf
+  ~ docs/testing.md
+  ~ scripts/build_docs_pdf.py
+  ~ scripts/gen_architecture_docs.py
+  ~ tests/test_docs.py
+
+DELETE BY HAND (0):
+  (none)

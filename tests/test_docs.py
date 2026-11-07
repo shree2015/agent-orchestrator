@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import gen_architecture_docs as gen  # noqa: E402
 
 DOCS = ROOT / "docs"
-CHECKED = [DOCS / "architecture.md", DOCS / "architecture-reference.md", DOCS / "requirements-traceability.md", ROOT / "README.md"]
+CHECKED = [DOCS / "architecture.md", DOCS / "architecture-reference.md", DOCS / "requirements-traceability.md", DOCS / "final-summary.md", ROOT / "README.md"]
 
 
 def test_generated_documentation_is_up_to_date():
@@ -27,7 +27,7 @@ def test_generated_documentation_is_up_to_date():
 
 
 def test_generated_blocks_are_balanced_and_known():
-    for path in (DOCS / "architecture.md", DOCS / "requirements-traceability.md"):
+    for path in (DOCS / "architecture.md", DOCS / "requirements-traceability.md", DOCS / "final-summary.md"):
         text = path.read_text(encoding="utf-8")
         assert text.count("<!-- BEGIN GENERATED:") == text.count("<!-- END GENERATED:"), path.name
         assert text.count("<!--GEN:") == text.count("<!--/GEN-->"), path.name
@@ -89,6 +89,18 @@ def test_the_traceability_document_covers_all_eight_requirements_and_all_criteri
     assert "Known gaps" in text                                                    # the gaps are stated, not hidden
 
 
+def test_the_final_summary_has_every_element_requirement_8_names():
+    text = (DOCS / "final-summary.md").read_text(encoding="utf-8")
+    for heading in ("Plan and rationale", "Artifacts", "Validation evidence", "Risks and trade-offs", "Assumptions", "Limitations", "How AI was used"):
+        assert re.search(rf"^## \d+\. {heading}", text, re.M), f"final summary lacks: {heading}"
+    assert "<!-- BEGIN GENERATED: data-scenario-results -->" in text and "<!-- BEGIN GENERATED: data-test-areas -->" in text
+
+
+def test_the_traceability_marks_requirement_8_met_and_points_to_the_summary():
+    row = next(ln for ln in (DOCS / "requirements-traceability.md").read_text(encoding="utf-8").splitlines() if ln.startswith("| 8 |"))
+    assert "final-summary.md" in row and row.rstrip().endswith("**Met** |") and "Pending" not in row
+
+
 def _mermaid_blocks():
     for doc in CHECKED:
         for i, block in enumerate(re.findall(r"```mermaid\n(.*?)```", doc.read_text(encoding="utf-8"), re.S), 1):
@@ -126,6 +138,6 @@ def test_every_mermaid_diagram_really_parses_and_renders(tmp_path):
 
 
 def test_the_pdf_versions_exist_and_are_real_pdfs():
-    for name in ("architecture.pdf", "requirements-traceability.pdf"):
+    for name in ("architecture.pdf", "requirements-traceability.pdf", "final-summary.pdf"):
         data = (DOCS / name).read_bytes()
         assert data.startswith(b"%PDF-") and len(data) > 20_000, name

@@ -4,7 +4,7 @@ Used as the test bed for the orchestrator before it is pointed at the URL shorte
 """
 from __future__ import annotations
 
-from ..agents.llm_agent import llm_agent
+from ..agents.llm_agent import llm_agent, review_agent
 from ..core.graph import Graph, Node
 from ..governance import gates as g
 from ..governance.policies.compliance import RELEASE_EVIDENCE
@@ -35,8 +35,17 @@ def release_agent(ctx):
                             + (["ui"] if "ui" in ctx else [])}
 
 
+SIZE_LIMITS = {"max_lines": 200}                      # the per-run settings this workflow accepts, with defaults
+
+
+def size_hint(limit: int, what: str = "file") -> str:
+    """Tell the model the change-control size limit up front (otherwise it only learns it by being rejected)."""
+    return (f" Change control rejects a {what} longer than {limit} lines, so aim for about {int(limit * 0.8)}: "
+            "be concise (short docstrings, no unused helpers or options).")
+
+
 def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", max_lines: int = 200,
-          ui: bool = False, plan: bool = False):
+          ui: bool = False, plan: bool = False, max_ui_lines: int = 500):
     ref = GraphRef()                   # lets plan/traceability gates look at the finished graph
     graph = (
         Graph()
@@ -60,7 +69,7 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
                   exit_gates=(g.docs_compliance,),
                   description="Generate documentation (parallel with tests)"))
         .add(Node("review", "reviewer", depends_on=("tests", "docs") + (("ui",) if ui else ()),
-                  exit_gates=(g.reviewer_approves,),
+                  exit_gates=(g.reviewer_approves,), max_retries=1, rework=g.review_rework("implementation"),
                   description="Sync point: critic reviews all artifacts"))
         .add(Node("release", "release_manager", depends_on=("review",),
                   entry_gates=(g.release_compliance_for(RELEASE_EVIDENCE + (("ui",) if ui else ()) + (("plan",) if plan else ())),),
@@ -73,23 +82,23 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
                        description="Decompose the requirement into tasks; plan must be coherent, executable and traceable"))
     if ui:  # a web UI is one more parallel branch: it only needs the implementation's API contract
         graph.add(Node("ui", "frontend", depends_on=("implementation",), max_retries=2, tags=("code",),
-                       exit_gates=(g.ui_security, g.ui_compliance, g.change_control_gate("ui.html", max_lines=500)),
+                       exit_gates=(g.ui_security, g.ui_compliance, g.change_control_gate("ui.html", max_lines=max_ui_lines)),
                        description="Generate the web UI; HTML/JS security + API-wiring + accessibility gates"))
     original = "### original request (exact names, routes, numbers and limits here are binding)\n" + requirement
     agents = {
         "requirements": llm_agent(llm, "requirements", "Extract requirements as JSON with keys goal, functional, constraints, ambiguities, acceptance. Preserve every exact name, route and number from the request.", seed=requirement),
         "architect": llm_agent(llm, "architect", "Produce a concise design for this request.", ("requirements",) + (("plan",) if plan else ()), seed=original),
-        "developer": llm_agent(llm, "developer", "Write the complete Python implementation for this request.", ("requirements", "design"), seed=original),
-        "developer_fallback": llm_agent(llm, "developer_fallback", "Write the SIMPLEST correct Python implementation only. No extras.", ("requirements", "design"), seed=original),
+        "developer": llm_agent(llm, "developer", "Write the complete Python implementation for this request. Do not include tests or a test runner in the module: a separate tester writes them." + size_hint(max_lines), ("requirements", "design"), seed=original),
+        "developer_fallback": llm_agent(llm, "developer_fallback", "Write the SIMPLEST correct Python implementation only. No extras." + size_hint(max_lines), ("requirements", "design"), seed=original),
         "tester": llm_agent(llm, "tester", "Write plain test_ functions (do not import the module under test)." + (" Create every test name the plan promises." if plan else ""), ("requirements", "implementation") + (("plan",) if plan else ())),
         "doc_writer": llm_agent(llm, "doc_writer", "Write markdown docs.", ("design", "implementation")),
-        "reviewer": llm_agent(llm, "reviewer", "Reply APPROVE or REJECT with reasons.", ("implementation", "tests", "docs")),
+        "reviewer": review_agent(llm, original, ui=ui),
         "release_manager": release_agent,
     }
     if plan:
         agents["planner"] = llm_agent(llm, "planner", "Decompose the requirement into JSON tasks (id, title, node, depends_on) plus acceptance-criterion traceability.", ("requirements",))
     if ui:
-        agents["frontend"] = llm_agent(llm, "frontend", "Write ONE self-contained index.html (inline CSS and JS, no external resources) that calls exactly the API routes the request and the implementation define.", ("requirements", "design", "implementation"), seed=original)
+        agents["frontend"] = llm_agent(llm, "frontend", "Write ONE self-contained index.html (inline CSS and JS, no external resources) that calls exactly the API routes the request and the implementation define." + size_hint(max_ui_lines), ("requirements", "design", "implementation"), seed=original)
     ref.graph = graph
     return graph, agents
 

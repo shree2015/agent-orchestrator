@@ -12,7 +12,7 @@ touch". Reviewing a diff by eye does not scale to agent-authored patches.
 2. The patch is then **bound to that declaration**: any added, removed or modified symbol (function, method,
    class body, module level) that was not declared is a violation.
 3. Compatibility and size are enforced mechanically: backward-compatible public signatures, a 40-line / 1-file
-   budget (versus 600 lines for a new service).
+   budget (versus 900 lines by default for a new service).
 4. A fix needs a **regression test that fails on the old code**, and existing tests can never be removed.
 
 ## Alternatives considered

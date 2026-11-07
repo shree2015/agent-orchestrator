@@ -1,6 +1,8 @@
 """Build a PDF from a Markdown document, rendering its Mermaid diagrams (a developer tool, not needed to run the project).
 
-    python scripts/build_docs_pdf.py docs/architecture.md docs/architecture.pdf
+    python scripts/build_docs_pdf.py docs/architecture.md docs/architecture.pdf [--compact]
+
+--compact uses slightly smaller type (the final summary is built that way to stay near four pages).
 
 Needs: pandoc, Node.js with puppeteer-core and @mermaid-js/mermaid-cli (`mmdc`), and a local Chromium (set CHROMIUM to its path).
 Each ```mermaid block becomes an image; a line `%% pdf: width=9cm` inside a block sets its printed width (it is a Mermaid
@@ -67,7 +69,7 @@ def render_mermaid(blocks: list[str], work: Path) -> list[Path]:
     return images
 
 
-def build(md: Path, pdf: Path, footer: str | None = None) -> int:
+def build(md: Path, pdf: Path, footer: str | None = None, compact: bool = False) -> int:
     work = Path(tempfile.mkdtemp(prefix="docpdf-"))
     text = md.read_text(encoding="utf-8")
     blocks = [m.group(1) for m in re.finditer(r"```mermaid\n(.*?)```", text, re.S)]
@@ -87,7 +89,8 @@ def build(md: Path, pdf: Path, footer: str | None = None) -> int:
     text = re.sub(r"```mermaid\n(.*?)```", figure, text, flags=re.S)
     text = re.sub(r"\[([^\]]+)\]\((?!https?://)([^)]+)\)", r"\1", text)          # local links are meaningless on paper
     (work / "doc.md").write_text(text, encoding="utf-8")
-    (work / "style.css").write_text(CSS)
+    css = CSS.replace("html { font-size: 10.7pt; }", "html { font-size: 10.1pt; }").replace("line-height: 1.42;", "line-height: 1.38;") if compact else CSS
+    (work / "style.css").write_text(css)
     run(["pandoc", "doc.md", "-f", "markdown-smart-tex_math_dollars-citations-yaml_metadata_block-implicit_figures", "-t", "html5", "-s", "--embed-resources", "--css", "style.css",
          "--metadata", f"pagetitle={md.stem}", "-o", "doc.html"], cwd=work)
     html = (work / "doc.html").read_text(encoding="utf-8")
@@ -110,5 +113,5 @@ def build(md: Path, pdf: Path, footer: str | None = None) -> int:
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         sys.exit(__doc__)
-    pages = build(Path(sys.argv[1]), Path(sys.argv[2]))
+    pages = build(Path(sys.argv[1]), Path(sys.argv[2]), compact="--compact" in sys.argv)
     print(f"wrote {sys.argv[2]} ({pages} pages)")

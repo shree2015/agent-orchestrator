@@ -52,7 +52,7 @@ python -m orchestrator.cli run shortener --approve deny:release              # h
 |---|---|---|
 | Agent leaks a credential | `no-hardcoded-secrets` gate | pattern-based, misses obfuscation |
 | Agent adds an unreviewed dependency | `dependency-allowlist` (stdlib only) | allowlist must be maintained by humans |
-| Oversized change | `max-lines-changed` (600 for a new service, explicit) | numeric limits are a proxy for risk |
+| Oversized change | `max-lines-changed` (900 for a new service by default, explicit and set per run) | numeric limits are a proxy for risk |
 | Open redirect / SSRF abuse via submitted URLs | private/loopback/credentialed/non-ASCII URLs rejected | no DNS resolution, so a public name pointing at a private IP gets through |
 | Abuse of write endpoints | per-client fixed-window rate limit, `Retry-After` | per-process state; behind a proxy needs trusted-header handling |
 | Anyone can delete any link | none yet | needs owner tokens / auth (documented limitation) |

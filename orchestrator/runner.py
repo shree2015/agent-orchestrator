@@ -20,17 +20,19 @@ EXT = {"implementation": "py", "tests": "py", "requirements": "json", "ui": "htm
 # Events worth showing in the report's governance timeline.
 TIMELINE = {"attempt_failed", "fallback_engaged", "checkpoint", "replan", "rollback",
             "change_committed", "change_rejected", "approval", "safe_stop",
-            "revision", "revision_noop", "revision_rejected", "policy_lint"}
+            "revision", "revision_noop", "revision_rejected", "policy_lint", "rework"}
 
 
 def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id: str | None = None,
-                 revisions=(), edits=(), on_replan=None, assets=None, llm=None, on_start=None, **engine_kwargs) -> dict:
+                 revisions=(), edits=(), on_replan=None, assets=None, llm=None, on_start=None, run_config=None, **engine_kwargs) -> dict:
     """Run a workflow; optionally apply upstream revisions afterwards (dynamic re-planning).
 
     assets: {filename: text} of baseline files the change did not touch; written next to the artifacts so the output
     folder is a complete, runnable deliverable (e.g. brownfield changes keep the existing web UI).
     edits: iterable of (node_id, new_content_or_callable(engine), reason[, by]) - each calls engine.revise(): the changed
     output is fingerprinted and ONLY the nodes whose inputs changed are redone (an identical edit changes nothing).
+    run_config: the operator's settings for this run (mode, model, size limits...), recorded as the first audit event. It must never
+    contain secrets.
     on_start: called as on_start(engine, audit, run_dir) right after the engine exists and before it runs, so a caller
     (the admin page) can watch the live engine.
     revisions: iterable of (node_id, reason, before_rerun) - after the run completes, the engine
@@ -40,6 +42,8 @@ def run_workflow(graph, agents, approver, run_root: str | Path = "runs", run_id:
     run_id = run_id or f"{time.strftime('run-%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     run_dir = Path(run_root) / run_id
     audit = AuditLog(run_dir / "audit.jsonl")
+    if run_config:
+        audit({"ts": time.time(), "event": "run_config", "config": run_config})
     # Governance applies to the workflow itself: a definition that drops a mandatory control never runs.
     lint = lint_graph(graph)
     audit({"ts": time.time(), "event": "policy_lint", "passed": not lint, "violations": [str(v) for v in lint]})
@@ -89,6 +93,11 @@ def write_outputs(run_dir: Path, run_id: str, engine, audit, assets=None) -> dic
     art.mkdir(exist_ok=True)
     for node_id, out in engine.context.items():
         (art / f"{node_id}.{EXT.get(node_id, 'md')}").write_text(out["content"], encoding="utf-8")
+    for stale in art.glob("REJECTED-*"):               # the last rejected output of each failed stage, so a halted run can be diagnosed
+        stale.unlink()
+    for node_id, out in engine.rejected.items():
+        text = out["content"] if isinstance(out, dict) and "content" in out else str(out)
+        (art / f"REJECTED-{node_id}.{EXT.get(node_id, 'md')}").write_text(str(text), encoding="utf-8")
     for name, content in (assets or {}).items():       # unchanged files of the existing codebase (e.g. the web UI)
         if not (art / name).exists():                  # never overwrite something an agent produced
             (art / name).write_text(content, encoding="utf-8")
@@ -112,4 +121,6 @@ def render_report(run_id, engine, m, audit) -> str:
             f"**Halt reason:** {m['halt_reason'] or '-'}  \n**Audit chain intact:** {ok}\n\n"
             f"## Nodes\n| Node | State | Attempts | Produced by |\n|---|---|---|---|\n{rows}\n\n"
             f"## Governance timeline\n{timeline or '- (no retries, fallbacks, re-plans or rollbacks)'}\n\n"
+            + ("## Rejected outputs\n" + "\n".join(f"- `{n}`: the last rejected output is saved as `artifacts/REJECTED-{n}.{EXT.get(n, 'md')}`"
+                                                    for n in engine.rejected) + "\n\n" if engine.rejected else "") +
             f"## Decision lineage\n{lineage}\n\n## Reliability metrics\n| Metric | Value |\n|---|---|\n{mrows}\n")

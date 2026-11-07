@@ -100,6 +100,12 @@ def main(argv=None) -> int:
     r.add_argument("--record", metavar="DIR", help="save the system prompt, prompt and response of every LLM call as JSON "
                    "(with --llm mock this is a free preview of exactly what a real run would send)")
     r.add_argument("--max-replans", type=int, default=3, help="change control: re-plans allowed per run")
+    r.add_argument("--max-reworks", type=int, default=2, metavar="N",
+                   help="change control: how many times a reviewer's rejection may send work back to be redone (default 2; 0 = halt at once)")
+    r.add_argument("--max-lines-changed", type=int, metavar="N", help="change control: the most lines the code stage may produce "
+                   "(shortener default 900, slugify 200); recorded in the audit log")
+    r.add_argument("--max-ui-lines", type=int, metavar="N", help="change control: the most lines the web UI stage may produce "
+                   "(shortener default 700); recorded in the audit log")
     r.add_argument("--run-root", default="runs")
     a = p.parse_args(argv)
 
@@ -123,6 +129,7 @@ def main(argv=None) -> int:
     scripted = scripted_answers(wf, violations)
     llm = wf.make_llm(fail_times=fail, scripted=scripted)
     client = None
+    roles = None
     if real:
         try:
             client = anthropic_client.AnthropicClient(model=a.model, max_tokens=a.max_tokens, max_calls=a.max_llm_calls,
@@ -166,6 +173,19 @@ def main(argv=None) -> int:
             p.error("expected ID=VALUE")
 
     extra = {"requirement": requirement} if requirement else {}
+    supported = getattr(wf, "SIZE_LIMITS", {})                      # the size limits this workflow lets the operator set
+    for value, key, flag in ((a.max_lines_changed, "max_lines", "--max-lines-changed"), (a.max_ui_lines, "max_ui_lines", "--max-ui-lines")):
+        if value is None:
+            continue
+        if key not in supported:
+            p.error(f"{flag} does not apply to '{a.workflow}'" + (" (its limits are fixed by the scenario)" if not supported else f" (it accepts: {', '.join(supported)})"))
+        if not 50 <= value <= 5000:
+            p.error(f"{flag} must be between 50 and 5000")
+        extra[key] = value
+    limits = {k: extra.get(k, default) for k, default in supported.items()}
+    if limits:
+        print("Size limits (change control): " + ", ".join(f"{k.replace('_', ' ')} = {v}" for k, v in limits.items())
+              + ("  [raised above the default; recorded in the audit log]" if any(v > supported[k] for k, v in limits.items()) else ""))
     if "asker" in inspect.signature(wf.build).parameters:       # workflows that ask clarifying questions
         extra["asker"] = approvals.layered_asker(approvals.dict_asker(pairs(a.answer)),
                                                  approvals.cli_asker if a.approve == "ask" else approvals.no_asker)
@@ -184,7 +204,9 @@ def main(argv=None) -> int:
     try:
         res = run_workflow(graph, agents, approver, run_root=a.run_root, revisions=revisions, edits=edits,
                            on_replan=break_developers, assets=getattr(wf, "ASSETS", None), llm=llm,
-                           backoff_base_s=a.backoff, max_replans=a.max_replans)
+                           backoff_base_s=a.backoff, max_replans=a.max_replans, max_reworks=a.max_reworks,
+                           run_config={"workflow": a.workflow, "llm": a.llm, "model": a.model if real else None, "roles": roles, "limits": limits,
+                                       "approve": a.approve.split(":")[0], "max_replans": a.max_replans, "max_reworks": a.max_reworks})
     except GovernanceError as exc:
         print(f"\nWORKFLOW REJECTED BY GOVERNANCE LINT:\n  " + "\n  ".join(str(v) for v in exc.violations))
         return 2

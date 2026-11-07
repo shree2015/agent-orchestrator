@@ -77,6 +77,7 @@ class Engine:
         backoff_base_s: float = 0.0,    # delay after 1st failure; doubles each retry (0 = off)
         backoff_max_s: float = 5.0,
         max_replans: int = 3,           # change control: bound how often upstream changes may churn the run
+        max_reworks: int = 2,           # change control: bound how often review findings may send work back
         sleep: Callable[[float], None] = time.sleep,   # injectable so tests need no real waiting
     ) -> None:
         graph.validate()
@@ -96,9 +97,13 @@ class Engine:
         self._sleep = sleep
         self.max_replans = max_replans
         self._replans = 0
+        self.max_reworks = max_reworks
+        self._reworks = 0
+        self._rework_notes: dict[str, dict] = {}       # node_id -> {"error": the findings, "previous": its last output}, consumed by its next run
 
         self.state: dict[str, NodeState] = {n: NodeState.PENDING for n in graph.nodes}
         self.context: dict[str, Any] = {}      # node_id -> committed output
+        self.rejected: dict[str, Any] = {}      # node_id -> the last output that was REJECTED (kept for diagnosis; cleared when the node commits)
         self.producer: dict[str, str] = {}     # node_id -> agent key that produced the committed output
         self.fingerprint: dict[str, str] = {}  # node_id -> fingerprint of the committed output
         self._consumed: dict[str, dict[str, str]] = {}   # node_id -> {ancestor: fingerprint it saw}
@@ -283,7 +288,9 @@ class Engine:
 
         # 2. primary agent with bounded retries + backoff (exit gates are part of "success")
         used = node.agent
-        output, last_error, aborted, last_output = self._run_agent(node, node.agent, ctx, node.max_retries + 1, "primary")
+        note = self._rework_notes.pop(node.id, None)        # a reviewer sent this node back: its first attempt is told what was found
+        output, last_error, aborted, last_output = self._run_agent(
+            node, node.agent, ctx, node.max_retries + 1, "primary", *( (note["error"], note["previous"]) if note else () ))
         if aborted:
             return
 
@@ -297,6 +304,11 @@ class Engine:
             if aborted:
                 return
         if last_error:
+            if last_output is not None:
+                self.rejected[node.id] = last_output
+            if node.rework is not None and last_output is not None and node.rework.when(str(last_output)):
+                if self._send_back(node, str(last_output)):
+                    return
             kind = "retries and fallback exhausted" if node.fallback_agent else "retries exhausted"
             return self._fail(node, f"{kind}: {last_error}")
 
@@ -306,17 +318,45 @@ class Engine:
             approved = self.approver(node, output)
             self._audit("approval", node=node.id, approved=approved)
             if not approved:
+                self.rejected[node.id] = output
                 self._set(node.id, NodeState.REJECTED)
                 return self._safe_stop(f"{node.id} rejected by human")
 
         # 4. commit (output + which agent produced it: part of decision lineage)
         with self._lock:
             self.context[node.id] = output
+            self.rejected.pop(node.id, None)
             self.producer[node.id] = used
             self.fingerprint[node.id] = fingerprint_of(output)
             self._consumed[node.id] = {a: self.fingerprint[a] for a in self.graph.ancestors(node.id) if a in self.fingerprint}
         self._audit("node_committed", node=node.id, agent=used, fallback=used != node.agent)
         self._set(node.id, NodeState.DONE)
+
+    def _send_back(self, node: Node, findings: str) -> bool:
+        """A reviewer's rejection is not a malformed answer to retry: it is a verdict on earlier work. Redo that work with the findings.
+
+        Bounded by `max_reworks`; the redo is an ordinary change set (checkpointed, so a rework that fails is rolled back whole).
+        """
+        target = node.rework.target
+        short = " ".join(findings.split())[:400]
+        if self._reworks >= self.max_reworks:
+            self._audit("rework", node=node.id, target=target, granted=False, round=self._reworks, of=self.max_reworks,
+                        why=f"rework budget exhausted ({self.max_reworks})", findings=short)
+            return False
+        self._reworks += 1
+        affected = {target} | self.graph.downstream(target)
+        note = ("A reviewer rejected the finished work. Fix exactly the blocking problems in its findings that concern YOUR artifact and "
+                "keep everything else as it is. If a finding concerns another artifact, ignore it (that one is being fixed too).\n"
+                "Reviewer's findings:\n" + findings)
+        with self._lock:
+            for nid in affected:
+                if nid != node.id and nid in self.context:       # every generating stage that is redone is told, with its own previous output
+                    self._rework_notes[nid] = {"error": note, "previous": self.context[nid].get("content") if isinstance(self.context[nid], dict) else self.context[nid]}
+        self._audit("rework", node=node.id, target=target, granted=True, round=self._reworks, of=self.max_reworks, findings=short,
+                    redo=sorted(affected))
+        self._replan_nodes(affected, trigger=node.id, reason=f"reviewer findings (rework {self._reworks} of {self.max_reworks})", auto=True,
+                           why="the reviewer rejected the work; findings sent back to the stages that produced it")
+        return True
 
     def _run_agent(self, node: Node, agent_key: str, ctx: Mapping[str, Any], max_attempts: int, stage: str,
                    error: str = "", previous: Any = None) -> tuple[Any, str, bool, Any]:

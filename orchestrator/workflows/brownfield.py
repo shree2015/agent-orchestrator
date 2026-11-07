@@ -17,7 +17,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ..agents.llm_agent import llm_agent
+from ..agents.llm_agent import llm_agent, review_agent
 from ..core.graph import Graph, Node
 from ..governance import gates as g
 from ..governance.policies.compliance import RELEASE_EVIDENCE
@@ -109,7 +109,8 @@ def build(llm, requirement: str = REQUIREMENT):
         .add(Node("docs", "doc_writer", depends_on=("implementation",), max_retries=2,
                   exit_gates=(g.changelog_ticket(TICKET),),
                   description="Changelog entry referencing the ticket (parallel with tests)"))
-        .add(Node("review", "reviewer", depends_on=("tests", "docs"), exit_gates=(g.reviewer_approves,),
+        .add(Node("review", "reviewer", depends_on=("tests", "docs"), exit_gates=(g.reviewer_approves,), max_retries=1,
+                  rework=g.review_rework("implementation"),
                   description="Sync point: critic reviews patch, tests and changelog"))
         .add(Node("release", "release_manager", depends_on=("review",),
                   entry_gates=(g.release_compliance_for(RELEASE_EVIDENCE + ("impact_analysis",)),),
@@ -124,7 +125,8 @@ def build(llm, requirement: str = REQUIREMENT):
         "developer_fallback": llm_agent(llm, "developer_fallback", "Return the SMALLEST possible patched file fixing the bug.", ("requirements", "impact_analysis", "design"), seed="### baseline code\n" + BASELINE_CODE),
         "tester": llm_agent(llm, "tester", "Return the full test file: keep every existing test and add regression tests that fail on the baseline.", ("requirements", "implementation"), seed="### existing tests\n" + BASELINE_TESTS),
         "doc_writer": llm_agent(llm, "doc_writer", f"Write a changelog entry that references {TICKET}.", ("implementation", "impact_analysis")),
-        "reviewer": llm_agent(llm, "reviewer", "Reply APPROVE or REJECT with reasons.", ("implementation", "tests", "docs")),
+        "reviewer": review_agent(llm, "### original request (exact names, routes, numbers and limits here are binding)\n" + requirement,
+                                 existing_code=True, extra_inputs=("impact_analysis",)),
         "release_manager": release_agent,
     }
     return graph, agents

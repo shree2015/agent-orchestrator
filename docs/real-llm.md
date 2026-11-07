@@ -68,8 +68,9 @@ or for a one-liner: `--requirement "Build a ..."`. What happens to your text:
 
 Keep the **API routes** and **technical constraints** in the template unless you also expect to change what depends on
 them: the generated web page calls those routes, and the checks (for example "the UI uses the documented API") look
-for them. If you make the requirement much bigger, the change-control size limit (600 lines for the service, 500 for
-the UI) will say so; raise it in `orchestrator/workflows/shortener.py` deliberately, or ask for a smaller solution.
+for them. If you make the requirement much bigger, the change-control size limit (900 lines for the service, 700 for
+the UI) will say so; raise it for that run with `--max-lines-changed` / `--max-ui-lines` (or under "Size limits" on the admin page),
+or ask for a smaller solution. The model is told the limits in its prompt, and a raised limit is recorded in the audit log.
 
 ## 4. How the loop works with a real model
 * Each role has an **output contract** (`orchestrator/llm/contracts.py`) that states what its gates enforce: for
@@ -78,6 +79,16 @@ the UI) will say so; raise it in `orchestrator/workflows/shortener.py` deliberat
   artifacts are never altered.
 * When a gate rejects an attempt, the **retry prompt contains the exact reason and the model's previous output**
   (and a fallback agent also learns why the primary failed). A mock ignores this; a real model uses it to fix the problem.
+* The **reviewer** is a final model call that judges the finished work against *your request*. It is told what has already been
+  verified (the code parses and passes the security, compliance and change-control policies, the tests pass in a sandbox, the
+  documentation covers the public API, the UI passes its policies), and that it may REJECT only for a **blocking** defect
+  (behaviour that contradicts the request, a security flaw, tests that do not exercise the request, wrong documentation).
+  Style and optional improvements are not blocking. Its reasons appear in the failure message, and its verdict is kept in
+  full as `REJECTED-review.md`. On a retry it is asked to **re-check its own verdict**, not to "fix" it.
+* A rejection that stands is **not** the end of the run: the reviewer's findings are sent back to the stages that produced the work
+  (code, tests, documentation, UI), which redo it and are reviewed again, up to `--max-reworks` rounds (default 2; 0 = halt at once).
+  Each round costs roughly five more model calls. The tests are written by a separate tester and executed in the same namespace as the
+  code; the developer is told not to embed tests in the module.
 * A cut-off answer (output limit hit) is **rejected**, never passed to the gates as broken code. Raise `--max-tokens`.
 
 ## 5. Cost and safety limits
@@ -88,7 +99,9 @@ the UI) will say so; raise it in `orchestrator/workflows/shortener.py` deliberat
 | Wait per call | 300 s | `--llm-timeout S` |
 | Rate limits (429) and server errors (5xx, 529) | retried with backoff, honouring Retry-After | |
 | Wrong key, no access, unknown model | **fatal, fail fast**, no further calls | |
-| Engine-level limits | per-node retries, global attempt budget, safe-stop | |
+| Size of each generated file (change control) | service 900 lines, UI 700 | `--max-lines-changed N`, `--max-ui-lines N` (audited) |
+| Review rework rounds (findings sent back) | 2 | `--max-reworks N` |
+| Engine-level limits | per-node retries, global attempt budget (50), safe-stop | |
 
 Your requirement text, the upstream artifacts and the generated code are sent to the API. Do not put confidential
 material in a requirement file (for example, do not paste the assignment PDF, which is marked internal).
@@ -100,8 +113,9 @@ material in a requirement file (for example, do not paste the assignment PDF, wh
 | `set --model` | the model name is not available to your account | `--model <a model you have>` |
 | `cut off at max_tokens` | the artifact is longer than the limit | raise `--max-tokens` or ask for a smaller solution |
 | `ModuleNotFoundError` in the tests stage | the model imported the module in its tests | the contract forbids it; the retry feedback usually fixes it |
-| `[change_control/max-lines-changed]` | the service is bigger than the budget | ask for a smaller one, or raise the limit deliberately |
+| `[change_control/max-lines-changed]` | the stage's output is bigger than its size limit (a real model is wordier than the stored reference: the first live run wrote 687 lines) | the message names the limit. Raise it for this run: `--max-lines-changed 1200` (UI: `--max-ui-lines`), or "Size limits" on the admin page. It is recorded in the audit log. Or ask for something smaller |
 | `[compliance/traceability-evidence-exists]` | the tester skipped a test the plan promised | normally fixed by the retry |
+| `review: ... reviewer did not approve: REJECT ...` after "Review sent the work back" | the reviewer found a blocking defect, the work was redone up to the rework budget, and the reviewer still objected | read `REJECTED-review.md` (on the admin page: Results; or `runs/<id>/artifacts/`). If the reasons are real, make the request clearer or fix what they name, then run again. Do not just raise a limit: a reviewer retry already re-checks its own verdict, so a repeated rejection means the objection stands |
 | `[security/...]` | the model used a forbidden call, import or pattern | the message names the rule; the retry fixes it |
 | `LLM call budget exhausted` | the run needed more than `--max-llm-calls` | raise it if intended |
 

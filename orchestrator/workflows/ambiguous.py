@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..agents.llm_agent import llm_agent
+from ..agents.llm_agent import llm_agent, review_agent
 from ..core.graph import Graph, Node
 from ..governance import gates as g
 from ..governance.policies.compliance import RELEASE_EVIDENCE
@@ -236,7 +236,8 @@ def build(llm, requirement: str = REQUIREMENT, asker=None):
                   description="New tests must fail on the old code, keep every old test, and match the plan's promises"))
         .add(Node("docs", "doc_writer", depends_on=("implementation",), max_retries=2,
                   exit_gates=(g.changelog_ticket(TICKET),), description="Changelog recording every decision (parallel with tests)"))
-        .add(Node("review", "reviewer", depends_on=("tests", "docs"), exit_gates=(g.reviewer_approves,),
+        .add(Node("review", "reviewer", depends_on=("tests", "docs"), exit_gates=(g.reviewer_approves,), max_retries=1,
+                  rework=g.review_rework("implementation"),
                   description="Sync point: critic reviews code, tests and changelog"))
         .add(Node("release", "release_manager", depends_on=("review",),
                   entry_gates=(g.release_compliance_for(RELEASE_EVIDENCE + ("clarifications", "impact_analysis", "plan")),),
@@ -255,7 +256,8 @@ def build(llm, requirement: str = REQUIREMENT, asker=None):
         "developer_fallback": reads("developer_fallback", "Return the SMALLEST patched file honouring the decisions.", "requirements", "impact_analysis", "design", "clarifications", seed="### baseline code\n" + BASELINE_CODE),
         "tester": reads("tester", "Return the full test file: keep all existing tests, add tests for the decisions.", "requirements", "implementation", "clarifications", seed="### existing tests\n" + BASELINE_TESTS),
         "doc_writer": reads("doc_writer", f"Write a changelog entry for {TICKET} recording every decision.", "implementation", "clarifications"),
-        "reviewer": reads("reviewer", "Reply APPROVE or REJECT with reasons.", "implementation", "tests", "docs"),
+        "reviewer": review_agent(llm, "### original request (exact names, routes, numbers and limits here are binding)\n" + requirement,
+                                 existing_code=True, extra_inputs=("clarifications",)),
         "release_manager": release_agent,
     }
     return graph, agents

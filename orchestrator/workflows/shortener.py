@@ -19,7 +19,10 @@ read = lambda name: (_REF / name).read_text(encoding="utf-8")
 REQUIREMENT = ("Build a URL shortener service: shorten, redirect with expiry, click analytics, "
                "custom aliases, rate limiting and basic abuse protection, plus a simple web UI. Ship tests and docs.")
 CODE_PATH = "shortener.py"
-MAX_LINES = 600          # a whole service is bigger than the toy default of 200: an explicit, reviewed limit
+MAX_LINES = 900          # a whole service is bigger than the toy default of 200: explicit, reviewed limits (the stored reference is 507 lines;
+MAX_UI_LINES = 700       # a real model is wordier, and the first live run wrote 687). Both can be set per run: --max-lines-changed / --max-ui-lines
+
+SIZE_LIMITS = {"max_lines": MAX_LINES, "max_ui_lines": MAX_UI_LINES}     # the per-run settings this workflow accepts, with defaults
 
 GOOD_CODE = read("shortener.py.txt")
 GOOD_UI = read("ui.html.txt")
@@ -72,8 +75,8 @@ VIOLATIONS = {
 }
 
 
-def build(llm, requirement: str = REQUIREMENT):
-    return slugify.build(llm, requirement, code_path=CODE_PATH, max_lines=MAX_LINES, ui=True, plan=True)
+def build(llm, requirement: str = REQUIREMENT, max_lines: int = MAX_LINES, max_ui_lines: int = MAX_UI_LINES):
+    return slugify.build(llm, requirement, code_path=CODE_PATH, max_lines=max_lines, ui=True, plan=True, max_ui_lines=max_ui_lines)
 
 
 def make_llm(fail_times=None, scripted=None):

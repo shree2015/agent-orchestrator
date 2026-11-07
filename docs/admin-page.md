@@ -19,6 +19,7 @@ no pipeline logic of its own, so everything you see here is also true of `python
 | **Stop** | A safe-stop: nothing new starts, waiting decisions are released, work already in flight finishes |
 | **Results** | Open any artifact, read the report, download everything as a zip, verify the audit trail's hash chain |
 | **Run the generated service** | For runs that built a service: **Start this service** launches it on a free port, shows a link, and **Stop service** ends it. Described below |
+| **Size limits** | The most lines the code and web UI stages may produce (defaults 900 and 700 for the shortener). The model is told them; raising one is recorded in the audit log, and a run stopped by a limit says how to continue |
 | **Change an answer** | After the ambiguous scenario finishes, pick a decision and a new answer: only the dependent work is redone (automatic re-plan), or the change is refused/rolled back by the same rules as on the command line |
 | **Earlier runs** | Everything in the runs folder, including runs made from the command line |
 
@@ -98,6 +99,7 @@ Leave the admin page itself (port 8765) running if you are using it. Restarting 
 | Generate stays disabled | a run is still active (stop it), or Real mode's confirmation is unticked |
 | "unexpected Host header" / "missing or wrong admin token" | open the page at `http://127.0.0.1:<port>/` or `http://localhost:<port>/` and reload it |
 | A run waits forever | it is waiting for you: look at "Waiting for you", or press Stop |
+| A run halts with `[change_control/max-lines-changed]` | a stage produced more lines than its size limit. Raise it under "Size limits" and generate again, or ask for something smaller |
 | "the security policies now reject this file" | the implementation was edited after the run and now breaks a rule: regenerate it, or fix the named problem |
 | The service's port is still busy after Stop (Windows) | an older version left an orphaned process behind: see "Clearing leftover servers" below, then update |
 | "The service stopped on its own" | the generated program crashed; see `runs/<run-id>/service/service.log` |

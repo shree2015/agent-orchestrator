@@ -198,7 +198,8 @@ def test_a_mock_run_completes_and_everything_about_it_is_inspectable(tmp_path):
     assert s["metrics"]["run_status"] == "COMPLETED" and s["metrics"]["llm_calls"] == 0
     assert "implementation.py" in s["artifacts"] and "report.md" not in s["artifacts"]
     texts = [t["text"] for t in s["timeline"]]
-    assert texts[0] == "Run started" and any("implementation done" in t for t in texts) and texts[-1] == "Run finished: COMPLETED"
+    assert texts[0].startswith("Settings recorded: mock agents") and texts[1] == "Run started"            # the settings are the first audit event
+    assert any("implementation done" in t for t in texts) and texts[-1] == "Run finished: COMPLETED"
     # history and detail
     runs = a.call("GET", "/api/runs")[2]["runs"]
     assert runs[0]["run_id"] == run_id and runs[0]["scenario"] == "slugify" and runs[0]["status"] == "completed"

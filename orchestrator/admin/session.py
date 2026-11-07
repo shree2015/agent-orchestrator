@@ -96,6 +96,16 @@ def describe(e: dict) -> str | None:
         return f"{e['node']} revised by {e.get('by')}: {_short(e.get('reason'))}"
     if k == "revision_noop":
         return f"{e['node']}: identical answer, nothing to redo"
+    if k == "rework":
+        if e.get("granted"):
+            return (f"Review sent the work back (round {e.get('round')} of {e.get('of')}): {', '.join(e.get('redo', []))} will be redone. "
+                    f"Findings: {_short(e.get('findings'))}")
+        return f"Review rejected the work and the rework budget is spent ({e.get('of')}): {_short(e.get('findings'))}"
+    if k == "run_config":
+        c = e.get("config") or {}
+        lim = ", ".join(f"{n.replace('_', ' ')} {v}" for n, v in (c.get("limits") or {}).items())
+        real = c.get("mode") == "real" or c.get("llm") == "anthropic"
+        return "Settings recorded: " + (f"real model {c.get('model')}" if real else "mock agents") + (f"; size limits: {lim}" if lim else "")
     if k == "policy_lint" and not e.get("passed", True):
         return "Workflow rejected by governance lint"
     if k == "llm_call":
@@ -141,13 +151,13 @@ class RunSession:
             if cfg["record"]:
                 llm = RecordingLLM(llm, self.run_dir / "llm-records")
             self.llm = llm
-            extra: dict = {"requirement": cfg["requirement"]}
+            extra: dict = {"requirement": cfg["requirement"], **cfg["raised_limits"]}
             if "asker" in inspect.signature(self.wf.build).parameters:
                 extra["asker"] = self.asker
             graph, agents = self.wf.build(llm, **extra)
             self.graph = graph
             res = run_workflow(graph, agents, self.approver, run_root=self.state.run_root, run_id=self.run_id,
-                               assets=getattr(self.wf, "ASSETS", None), llm=llm, on_start=self._on_start)
+                               assets=getattr(self.wf, "ASSETS", None), llm=llm, on_start=self._on_start, run_config=self.public_config())
             self.last_status = res["status"]
         except GovernanceError as exc:
             self.error = f"workflow rejected by governance lint: {exc}"
@@ -158,10 +168,17 @@ class RunSession:
         finally:
             self.finished_at = time.time()
 
+    def public_config(self) -> dict:
+        """The settings recorded in the audit log and run.json: everything except secrets and the requirement text itself."""
+        c = self.cfg
+        return {"scenario": c["scenario"], "mode": c["mode"], "model": c.get("model"), "roles": c["roles"], "auto_approve": c["auto_approve"],
+                "max_calls": c["max_calls"] if c["mode"] == "real" else None, "max_tokens": c["max_tokens"] if c["mode"] == "real" else None,
+                "limits": c["limits"], "max_reworks": 2, "requirement_chars": len(c["requirement"])}
+
     def _on_start(self, engine, audit, run_dir) -> None:
         self.engine, self.audit = engine, audit
         meta = {"run_id": self.run_id, "scenario": self.cfg["scenario"], "mode": self.cfg["mode"], "model": self.cfg.get("model"),
-                "roles": self.cfg["roles"], "auto_approve": self.cfg["auto_approve"], "requirement": self.cfg["requirement"],
+                "roles": self.cfg["roles"], "auto_approve": self.cfg["auto_approve"], "limits": self.cfg["limits"], "requirement": self.cfg["requirement"],
                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(self.started_at))}
         (run_dir / "run.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         if self.stopped:
@@ -306,6 +323,12 @@ class RunSession:
         timeline = [{"seq": e["seq"], "text": t} for e in events if (t := describe(e))][-150:]
         usage = getattr(self.llm, "usage", None) if self.llm is not None else None
         notes = []
+        halt = self.engine.halt_reason if self.engine else None
+        if halt and "[change_control/max-lines-changed]" in halt:
+            notes.append("A size limit (change control) stopped this run. If that size is reasonable for what you asked for, raise the limit under "
+                         "\"Size limits\" and generate again; the new value is recorded in the audit log. Otherwise ask for something smaller.")
+        if self.engine is not None and self.engine.rejected and not self.busy:
+            notes.append("The last rejected output of the stage that stopped this run is saved in the results as REJECTED-<stage>: open it to see exactly what was refused.")
         if self.cfg["mode"] == "mock" and self.cfg["requirement"].strip() != scenarios.default_requirement(self.cfg["scenario"]).strip():
             notes.append("Mock agents return stored artifacts and ignore the requirement text. Switch to Real to see your wording drive the output.")
         done = not self.busy and self.engine is not None
@@ -313,7 +336,7 @@ class RunSession:
         return {
             "run": {"id": self.run_id, "scenario": self.cfg["scenario"], "mode": self.cfg["mode"], "model": self.cfg.get("model"),
                     "status": self.status, "halt_reason": self.engine.halt_reason if self.engine else None, "error": self.error,
-                    "auto_approve": self.cfg["auto_approve"], "busy": self.busy,
+                    "auto_approve": self.cfg["auto_approve"], "busy": self.busy, "limits": self.cfg["limits"],
                     "runnable": (not self.busy) and self.state.runnable(self.run_id)},
             "nodes": nodes, "timeline": timeline, "metrics": metrics_mod.compute(events) if events else {},
             "llm_usage": usage, "notes": notes, "artifacts": arts, "can_revise": bool(self.revisable()),
@@ -366,6 +389,19 @@ class AdminState:
         cfg = {"scenario": p["scenario"], "requirement": req.strip(), "mode": mode, "model": None, "roles": [],
                "max_calls": 40, "max_tokens": 16000, "auto_approve": bool(p.get("auto_approve", False)),
                "record": bool(p.get("record", mode == "real"))}
+        supported = getattr(scenarios.SCENARIOS[p["scenario"]]["workflow"], "SIZE_LIMITS", {})
+        raw_limits = p.get("limits") or {}
+        if not isinstance(raw_limits, dict):
+            raise AdminError(400, "limits must be an object such as {\"max_lines\": 900}")
+        limits = {}
+        for key, value in raw_limits.items():
+            if key not in supported:
+                raise AdminError(400, f"this scenario does not accept the size limit {key!r}" + (f" (it accepts: {', '.join(supported)})" if supported else ""))
+            if not isinstance(value, int) or isinstance(value, bool) or not 50 <= value <= 5000:
+                raise AdminError(400, f"the size limit {key} must be a whole number of lines from 50 to 5000")
+            limits[key] = value
+        cfg["limits"] = {**supported, **limits}                   # the limits in force: the defaults, with the operator's changes on top
+        cfg["raised_limits"] = limits
         if mode == "real":
             if not (self._key or os.environ.get("ANTHROPIC_API_KEY")):
                 raise AdminError(400, "no API key: set ANTHROPIC_API_KEY in the terminal that started this page, or paste a key here (kept in memory only)")

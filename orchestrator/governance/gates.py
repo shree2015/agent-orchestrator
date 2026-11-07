@@ -58,8 +58,16 @@ def tests_pass_against_implementation(ctx, out):
 
 
 def reviewer_approves(ctx, out):
-    ok = out["content"].strip().upper().startswith("APPROVE")
-    return ok, "ok" if ok else "reviewer did not approve"
+    text = " ".join(str(out["content"]).split())
+    if text.upper().startswith("APPROVE"):
+        return True, "ok"
+    return False, "reviewer did not approve: " + ((text[:300] + ("..." if len(text) > 300 else "")) if text else "(empty reply)")
+
+
+def review_rework(target: str = "implementation"):
+    """A reviewer's REJECT is a verdict on earlier work, so it is sent back (bounded); a reply that is not a verdict is just retried."""
+    from ..core.graph import Rework
+    return Rework(target, when=lambda text: text.strip().upper().startswith("REJECT"))
 
 
 def require_inputs(*node_ids):

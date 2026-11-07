@@ -3,7 +3,7 @@
 Governed, agentic software-engineering automation: a prototype that turns a requirement into a reviewable
 engineering outcome, with agents executing under explicit controls and humans owning approvals.
 
-**Version: v0.6.0 (architecture documentation, admin page, real LLM support)**
+**Version: v0.8.0 (all deliverables: orchestration, scenarios, admin page, documentation)**
 
 ## What this version contains
 * **Orchestration engine** (`orchestrator/core`): explicit dependency graph with entry/exit gates, parallel branches
@@ -52,7 +52,7 @@ pip install -r requirements-dev.txt
 ```
 python -m pytest -v
 ```
-Expected: **no failures**. With Node.js 18+ and `langgraph` both installed that is 375 passed; without Node.js the 2 browser-script
+Expected: **no failures**. With Node.js 18+ and `langgraph` both installed that is 408 passed; without Node.js the 2 browser-script
 tests are skipped, without `langgraph` its 1 comparison test is skipped, and without the optional Mermaid command-line tool the
 1 diagram-rendering test is skipped. Two tests are skipped automatically (reported as skipped, not failed) if an optional
 tool is missing: the LangGraph comparison needs `pip install langgraph`, and the real-browser-logic UI test needs
@@ -138,6 +138,7 @@ docs/           architecture overview (+ PDF), traceability, testing approach, p
 ## Documentation
 * `docs/architecture.md` (also `docs/architecture.pdf`) - **architecture overview**: components, orchestration model, control flow, governance, trust boundaries, key decisions and trade-offs, limits
 * `docs/architecture-reference.md` - generated from the code: every workflow graph, the controls on every stage, the policy and event catalogues, the metrics
+* `docs/final-summary.md` (also `docs/final-summary.pdf`) - **final engineering summary**: plan and rationale, artifacts, validation evidence, risks and trade-offs, assumptions, limitations, and how AI was used
 * `docs/requirements-traceability.md` (also `docs/requirements-traceability.pdf`) - every item of the brief mapped to code, evidence and an honest status
 * `docs/scenarios/01-greenfield-url-shortener.md` - decomposition, orchestration, validation, risks
 * `docs/scenarios/02-brownfield-orphaned-clicks.md` - impact analysis, bounded patch, regression proof
@@ -146,5 +147,5 @@ docs/           architecture overview (+ PDF), traceability, testing approach, p
 * `docs/admin-page.md` - the local admin page: runs, decisions, mock/real toggle, key handling, security model
 * `docs/real-llm.md` - running with a real model, cost and safety limits, troubleshooting
 * `docs/testing.md` - testing approach and known gaps
-* `docs/decisions/` - ADR 001 (resilience ladder), ADR 002 (policy-as-code), ADR 003 (brownfield: declare, then enforce), ADR 004 (fingerprint-based re-planning), ADR 005 (human decisions and traceability), ADR 006 (real LLM integration), ADR 007 (admin page), ADR 008 (launching generated services)
+* `docs/decisions/` - ADR 001 (resilience ladder), ADR 002 (policy-as-code), ADR 003 (brownfield: declare, then enforce), ADR 004 (fingerprint-based re-planning), ADR 005 (human decisions and traceability), ADR 006 (real LLM integration), ADR 007 (admin page), ADR 008 (launching generated services), ADR 009 (review-driven rework)
 * `docs/ai-usage-log.md` - how AI was used and how its output was verified

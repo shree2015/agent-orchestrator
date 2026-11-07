@@ -13,7 +13,7 @@ audit log, the run report and the metrics all say *which* rule fired.
 | `minimum-tests` (>= 3 `test_` functions) | compliance | `tests` exit gate | same |
 | `docs-cover-public-api` | compliance | `docs` exit gate | same |
 | `release-evidence` (all artifacts present + approving review) | compliance | `release` **entry** gate | safe-stop, release blocked |
-| `max-files-changed`, `max-lines-changed` | change control | `implementation` exit gate (`ChangeSet`) | retry -> fallback -> safe-stop |
+| `max-files-changed`, `max-lines-changed` | change control | `implementation` exit gate (`ChangeSet`); also the `ui` gate. Greenfield limits are set per run (`--max-lines-changed`, `--max-ui-lines`, or the admin page): defaults 900 / 700 lines; every run records the limits in force as its first audit event | retry -> fallback -> safe-stop |
 | `protected-paths` (`.env`, keys, CI, secrets) | change control | same | same |
 | `no-file-deletion` | change control | same | same |
 | `high-impact-requires-approval` | change control | **workflow lint**, before anything runs | workflow rejected |

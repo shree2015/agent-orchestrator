@@ -1,5 +1,93 @@
 # Changelog
 
+## v0.8.0 - review findings are sent back for rework (found on the second live run)
+
+### Fixed (test only, found on the author's Windows run)
+- `test_the_admin_page_lists_the_rejected_output_and_says_where_to_look` compared a saved artifact as the page serves it (CRLF line endings
+  on Windows) with an LF string, so it failed on Windows and passed on Linux. It now ignores line endings. No product code changed.
+
+### Why
+The second live run's reviewer was partly **right**: Sonnet's first draft really did accept non-ASCII URLs and then crash the redirect
+(the stored reference service already rejects them with a clear 400). The pipeline then halted. A real model's first draft will often
+have some defect, so a pipeline that stops at the first rejection cannot converge. A reviewer's REJECT is a verdict about earlier work,
+not a malformed answer to retry.
+
+### Added
+- **Review-driven rework** ([ADR 009](docs/decisions/009-review-driven-rework.md)): a node may declare `rework=Rework(target, when)`.
+  A reviewer's REJECT now sends its findings back; the code stage and everything downstream are redone, each producing stage told the
+  findings and shown its own previous output, and the review runs again. Bounded by `--max-reworks N` (default 2; 0 = halt at once),
+  checkpointed (a failed rework rolls back whole) and audited (`rework` event, `reworks` and `reworks_refused` metrics, a dashed arrow
+  in the workflow graphs). A reply that is not a verdict is retried as before. The graph rejects a rework target that is not upstream.
+- 8 tests (`tests/test_rework.py`).
+
+### Changed
+- The reviewer is told how tests work here: a separate tester writes them and they run in the same namespace as the implementation, so
+  they intentionally do not import it (a "missing import" is never a finding), and tests embedded in the implementation are not blocking.
+- The developer is told **not to embed tests** in the module (the 687-line service contained its own test suite, which duplicated the
+  tester's and inflated the size).
+- The reviewer now gets one retry (a re-check of its own verdict) before a rework, not two.
+
+
+## v0.7.2 - a reviewer that knows the request, says why, and re-checks (found on the second live run)
+
+### Fixed
+- **Second run with a real model (Sonnet) halted at `review`: three rejections, and only "reviewer did not approve" to show for it.**
+  Three faults:
+  - the reviewer judged the code, tests and documentation **without the original request, the web UI, or any statement of what had
+    already been verified**, so a real critic had to guess what the software was meant to do;
+  - its **reasons were discarded**: the gate said only "reviewer did not approve" (the verdict survived only in the recording file);
+  - a retry told it that its verdict "was rejected by automated checks", so it repeated itself. Three identical calls were wasted.
+
+### Changed
+- One shared reviewer definition for all three workflows: the request is the standard; it is told the automated checks have already
+  passed; it may REJECT only for a **blocking** defect (behaviour contradicting the request, a security flaw, tests that do not exercise
+  the request, wrong documentation); style and optional improvements are not blocking. Brownfield and ambiguous add the impact
+  analysis or the recorded decisions to its inputs.
+- A reviewer retry now asks it to **re-check its own verdict** against the request and the definition of blocking.
+- The gate message now includes the reviewer's reasons (shortened), so they appear in the activity feed, the halt reason and the audit log.
+
+### Added
+- **The last rejected output of a stage that stopped the run is kept** as `artifacts/REJECTED-<stage>` (and listed in the report and on
+  the admin page), so a halted real-model run can be diagnosed from the run folder.
+- 12 tests (`tests/test_review.py`).
+
+
+## v0.7.1 - size limits the model knows about and the operator can set (found on the first live run)
+
+### Fixed
+- **First run with a real model (Sonnet) halted at `implementation`: `[change_control/max-lines-changed] 687 lines changed; limit is 600`.**
+  Two gaps, not one: the model was never told the limit until it was rejected, and the limit could only be changed by editing code,
+  although the documentation said to "raise the limit deliberately".
+
+### Added
+- The developer, fallback and UI prompts now state the size limit and ask the model to aim for about 80% of it.
+- `--max-lines-changed N` and `--max-ui-lines N` (command line) and a **Size limits** section on the admin page set the limits per
+  run (50 to 5000 lines). Workflows with scenario-fixed limits (brownfield, ambiguous) refuse them.
+- A new first audit event, `run_config`, records the settings of every run (mode, model, size limits; never secrets or the
+  requirement text). The activity feed shows it, and a run stopped by a size limit says how to continue.
+
+### Changed
+- Defaults for a whole generated service are now 900 lines for the code and 700 for the UI (they were 600 and 500; the stored
+  reference service is 507 and 339 lines, and a real model is wordier). Limits are still enforced.
+- 10 tests (`tests/test_size_limits.py`), including the exact 687-line case.
+
+
+## v0.7.0 - final engineering summary
+
+### Added
+- `docs/final-summary.md` (and a PDF): the brief's requirement 8. Plan and rationale, artifacts, validation evidence, a risk register,
+  assumptions, limitations and next steps, and an open account of how AI was used and how its output was checked.
+- The summary's evidence is **generated by running the system**: tests by area (counted from the code), each of the three scenarios run
+  for real (stages, waves, approvals, the brownfield bug reproduced and fixed, a re-plan after changing an answer), and every one of the
+  24 scripted fault scenarios, recorded in `docs/architecture-reference.md` with the control that stopped it.
+- Version numbers and counts quoted in the documents (version, policies, events, faults, tests) are generated from the code and README.
+
+### Changed
+- `docs/ai-usage-log.md` now says who did each check. It previously mixed first-person voice for checks Claude had performed; it is
+  now explicit about what Claude did in its Linux sandbox and what the author did on Windows. Two rows were added.
+- Requirement 8 in the traceability document is now **Met**.
+
+
 ## v0.6.0 - architecture overview and requirements traceability
 
 ### Added

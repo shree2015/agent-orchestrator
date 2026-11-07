@@ -43,5 +43,6 @@ def template_requirement(scenario: str) -> str:
 
 def public_list() -> list[dict]:
     return [{"id": k, "title": v["title"], "description": v["description"], "asks_questions": v["asks_questions"],
-             "default_requirement": default_requirement(k), "has_template": k == "shortener" and TEMPLATE.exists()}
+             "default_requirement": default_requirement(k), "has_template": k == "shortener" and TEMPLATE.exists(),
+             "limits": dict(getattr(v["workflow"], "SIZE_LIMITS", {}))}
             for k, v in SCENARIOS.items()]

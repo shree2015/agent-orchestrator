@@ -91,6 +91,22 @@ th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line
         <span id="req-count" class="muted"></span>
       </div>
 
+      <details id="limits-box" hidden>
+        <summary>Size limits (change control)</summary>
+        <p class="muted">The most lines a stage may produce. The model is told these limits. Raising one weakens a control, so the value is recorded in the audit log.</p>
+        <div class="grid">
+          <div id="limit-code-wrap">
+            <label for="limit-code">Code stage (lines)</label>
+            <input type="number" id="limit-code" min="50" max="5000">
+          </div>
+          <div id="limit-ui-wrap">
+            <label for="limit-ui">Web UI stage (lines)</label>
+            <input type="number" id="limit-ui" min="50" max="5000">
+          </div>
+        </div>
+        <p id="limit-hint" class="muted"></p>
+      </details>
+
       <fieldset>
         <legend>Agents</legend>
         <input type="radio" id="mode-mock" name="mode" value="mock" checked>
@@ -266,9 +282,32 @@ th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line
       : 'An API key is available (' + KEY_TEXT[status] + '). The page never shows it.';
     updateStart();
   }
+  function currentScenario() {
+    return S.config.scenarios.filter(function (s) { return s.id === $('scenario').value; })[0];
+  }
+  function updateLimitHint() {
+    var sc = currentScenario();
+    var lim = (sc && sc.limits) || {};
+    var raised = [];
+    if (lim.max_lines !== undefined && Number($('limit-code').value) > lim.max_lines) { raised.push('code'); }
+    if (lim.max_ui_lines !== undefined && Number($('limit-ui').value) > lim.max_ui_lines) { raised.push('web UI'); }
+    $('limit-hint').textContent = raised.length ? 'Raised above the default for: ' + raised.join(', ') + '. This is recorded in the audit log.' : '';
+  }
+  function renderLimits(sc) {
+    var lim = sc.limits || {};
+    var hasCode = lim.max_lines !== undefined;
+    var hasUi = lim.max_ui_lines !== undefined;
+    $('limits-box').hidden = !(hasCode || hasUi);
+    $('limit-code-wrap').hidden = !hasCode;
+    $('limit-ui-wrap').hidden = !hasUi;
+    if (hasCode) { $('limit-code').value = String(lim.max_lines); }
+    if (hasUi) { $('limit-ui').value = String(lim.max_ui_lines); }
+    updateLimitHint();
+  }
   function renderScenario() {
-    var sc = S.config.scenarios.filter(function (s) { return s.id === $('scenario').value; })[0];
+    var sc = currentScenario();
     if (!sc) { return; }
+    renderLimits(sc);
     $('scenario-desc').textContent = sc.description;
     $('load-template').textContent = sc.has_template ? 'Load template' : 'Load default requirement';
     if (!S.dirty) { $('requirement').value = sc.default_requirement; countReq(); }
@@ -295,6 +334,11 @@ th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line
   function startBody() {
     var body = { scenario: $('scenario').value, requirement: $('requirement').value, mode: isReal() ? 'real' : 'mock',
                  auto_approve: $('auto-approve').checked };
+    var lim = (currentScenario() || {}).limits || {};
+    var limits = {};
+    if (lim.max_lines !== undefined) { limits.max_lines = Number($('limit-code').value); }
+    if (lim.max_ui_lines !== undefined) { limits.max_ui_lines = Number($('limit-ui').value); }
+    if (Object.keys(limits).length) { body.limits = limits; }
     if (isReal()) {
       body.confirm_real = $('confirm-real').checked;
       body.model = $('model').value.trim() || undefined;
@@ -580,6 +624,8 @@ th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line
       say('form-status', 'Template loaded.', 'ok');
     }).catch(function (err) { say('form-status', err.message, 'error'); });
   });
+  $('limit-code').addEventListener('input', updateLimitHint);
+  $('limit-ui').addEventListener('input', updateLimitHint);
   $('mode-mock').addEventListener('change', renderMode);
   $('mode-real').addEventListener('change', renderMode);
   $('confirm-real').addEventListener('change', updateStart);

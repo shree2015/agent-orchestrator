@@ -5,6 +5,7 @@ Definitions:
   * fallbacks          - times a node's retries were exhausted and its fallback agent was engaged
   * rollbacks          - times a failed change set was reverted to its last good checkpoint
   * replans            - times an upstream change invalidated downstream nodes
+  * reworks            - times a reviewer's rejection was sent back to the stages that produced the work (reworks_refused: budget spent)
   * node_success_rate  - nodes in state DONE at the end of the run / total nodes
   * mttr_s             - mean time from a node's first failed attempt to its next successful commit
                          (nodes that never recover are excluded, not counted as zero)
@@ -61,6 +62,8 @@ def compute(events: list[dict]) -> dict:
         "fallbacks": len(by("fallback_engaged")),
         "rollbacks": len(by("rollback")),
         "replans": len(by("replan")),
+        "reworks": len([e for e in by("rework") if e.get("granted")]),
+        "reworks_refused": len([e for e in by("rework") if not e.get("granted")]),
         "changes_rejected": len(by("change_rejected")),
         "llm_calls": len(by("llm_call")),
         "llm_input_tokens": sum(e.get("input_tokens", 0) for e in by("llm_call")),

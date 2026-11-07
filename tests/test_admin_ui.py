@@ -86,6 +86,6 @@ def test_the_page_script_works_end_to_end_against_a_real_admin_server(tmp_path):
     finally:
         _stop(httpd, state, saved)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert proc.stdout.count("PASS") >= 42 and "FAIL" not in proc.stdout
+    assert proc.stdout.count("PASS") >= 48 and "FAIL" not in proc.stdout
     leaked = b"".join(p.read_bytes() for p in tmp_path.rglob("*") if p.is_file())
     assert SECRET.encode() not in leaked                                                # nothing the harness did wrote the key to disk

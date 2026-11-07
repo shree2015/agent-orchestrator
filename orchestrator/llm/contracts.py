@@ -47,7 +47,7 @@ reliability decisions, and the smallest rollout/rollback story. No code blocks l
 Rules enforced by gates: standard library only (no third-party imports); every PUBLIC function and class (names not \
 starting with '_') has a docstring; never use eval, exec, compile(), __import__, os.system, subprocess, pickle, ctypes or \
 marshal; no hard-coded secrets or tokens; parameterised SQL only; the file must parse. The module must be usable as a script \
-(`if __name__ == "__main__":`) when the task asks for a runnable service. Keep to the size and API the task states. \
+(`if __name__ == "__main__":`) when the task asks for a runnable service. Keep to the size and API the task states. Do NOT put tests, test runners or unittest classes in the module: a separate tester writes the tests. \
 When given baseline code, return the WHOLE patched file, keep every existing public signature backward compatible \
 (new parameters must be optional) and change only what the task and impact analysis allow.""",
     "tester": """ROLE: tester. Output: ONE Python test file (raw source, no fences) made of plain functions named test_* that use \
@@ -67,8 +67,9 @@ no inline event-handler attributes (onclick=...) and no style="..." attributes; 
 insertAdjacentHTML, document.write, eval or new Function (render data with textContent); the <html> tag has lang, the page has \
 a non-empty <title>, and every form control has a <label for=...>. It must call the documented API routes given in the task. \
 Keep it under about 400 lines.""",
-    "reviewer": """ROLE: reviewer. Begin your reply with exactly APPROVE or REJECT, then a short justification covering code, \
-tests and documentation.""",
+    "reviewer": """ROLE: reviewer. Begin your reply with exactly APPROVE or REJECT, then at most five short bullet points covering code, \
+tests and documentation. REJECT only for a blocking defect (behaviour that contradicts the request, a security flaw, tests that do not \
+exercise the request, wrong documentation); style and optional improvements are not blocking.""",
 }
 CONTRACTS["developer_fallback"] = CONTRACTS["developer"] + "\nThis is the fallback attempt: prefer the simplest correct implementation."
 
