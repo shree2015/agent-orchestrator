@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shortener - URL shortener</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #5b6573; --line: #d9dee5;
+  --accent: #2557d6; --accent-text: #ffffff; --danger: #b3261e; --ok: #1a7f37; --focus: #ffb400;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151a; --card: #1b2027; --text: #e8ebf0; --muted: #9aa5b4; --line: #2e3640;
+    --accent: #6c93ff; --accent-text: #0b1020; --danger: #ff8a80; --ok: #5ed17f; --focus: #ffd166;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 1.6rem; margin: 0; }
+h2 { font-size: 1.1rem; margin: 0 0 12px; }
+.pill { font-size: 0.8rem; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.online { color: var(--ok); border-color: var(--ok); }
+.pill.offline { color: var(--danger); border-color: var(--danger); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 16px; }
+label { display: block; font-weight: 600; margin-bottom: 4px; }
+input, select { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--text); font: inherit; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+@media (max-width: 520px) { .row { grid-template-columns: 1fr; } }
+button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--card); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--danger); }
+button:disabled { opacity: 0.6; cursor: progress; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+.hint { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+#status { min-height: 1.5em; margin-top: 12px; font-weight: 600; }
+#status.error { color: var(--danger); }
+#status.ok { color: var(--ok); }
+.short { font-size: 1.2rem; font-weight: 700; word-break: break-all; }
+.muted { color: var(--muted); }
+.link-item { border-top: 1px solid var(--line); padding: 12px 0; }
+.link-item:first-child { border-top: 0; }
+.target { color: var(--muted); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.9rem; margin: 6px 0; }
+.days { list-style: none; margin: 6px 0 0; padding: 0; font-size: 0.85rem; }
+.days li { display: grid; grid-template-columns: 92px 1fr 32px; gap: 8px; align-items: center; }
+progress { width: 100%; height: 8px; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Shortener</h1>
+    <span id="health" class="pill" role="status">checking service...</span>
+  </header>
+
+  <section class="card" aria-labelledby="create-title">
+    <h2 id="create-title">Create a short link</h2>
+    <form id="shorten-form" novalidate>
+      <label for="url">Long URL</label>
+      <input id="url" name="url" type="url" inputmode="url" autocomplete="off" required
+             placeholder="https://example.com/a/very/long/address">
+      <div class="row">
+        <div>
+          <label for="alias">Custom alias (optional)</label>
+          <input id="alias" name="alias" type="text" autocomplete="off" maxlength="32" placeholder="my-launch-page">
+          <div class="hint">3-32 letters, digits, - or _</div>
+        </div>
+        <div>
+          <label for="ttl">Expires</label>
+          <select id="ttl" name="ttl">
+            <option value="">Never</option>
+            <option value="3600">In 1 hour</option>
+            <option value="86400">In 1 day</option>
+            <option value="604800">In 7 days</option>
+            <option value="2592000">In 30 days</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="submit" class="primary" type="submit">Shorten</button>
+      </div>
+    </form>
+    <div id="status" role="status" aria-live="polite"></div>
+    <div id="result" hidden>
+      <div class="muted">Your short link</div>
+      <a id="result-link" class="short" target="_blank" rel="noopener noreferrer"></a>
+      <div class="actions">
+        <button id="copy" type="button">Copy</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="links-title">
+    <div class="actions">
+      <h2 id="links-title">Links created in this browser</h2>
+      <button id="refresh-all" type="button">Refresh stats</button>
+    </div>
+    <p id="empty" class="muted">Nothing yet. Create a link above.</p>
+    <div id="links"></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var KEY = 'shortener.links.v1';
+  var MAX_LINKS = 50;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function loadLinks() {
+    try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { return []; }
+  }
+  function saveLinks(list) {
+    try { localStorage.setItem(KEY, JSON.stringify(list.slice(0, MAX_LINKS))); } catch (e) { /* private mode */ }
+  }
+  var links = loadLinks();
+  var statsByCode = {};
+  var lastStatus = 0;
+
+  function say(text, kind) {
+    var el = $('status');
+    el.textContent = text;
+    el.className = kind || '';
+  }
+
+  function api(method, path, body) {
+    var options = { method: method, headers: {} };
+    if (body !== undefined) {
+      options.headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify(body);
+    }
+    return fetch(path, options).then(function (res) {
+      lastStatus = res.status;
+      return res.text().then(function (text) {
+        var data = null;
+        if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
+        if (!res.ok) {
+          var message = data && data.error && data.error.message ? data.error.message : 'Request failed (' + res.status + ')';
+          var err = new Error(message);
+          err.status = res.status;
+          err.code = data && data.error ? data.error.code : null;
+          err.retryAfter = res.headers.get('Retry-After');
+          throw err;
+        }
+        return data;
+      });
+    });
+  }
+
+  function describeError(err) {
+    if (err && err.status === 429) {
+      return 'Too many requests. Try again in ' + (err.retryAfter || 'a few') + ' seconds.';
+    }
+    if (err && err.status) { return err.message; }
+    return 'Could not reach the service. Is it running?';
+  }
+
+  function formatTime(seconds) {
+    return seconds ? new Date(seconds * 1000).toLocaleString() : 'never';
+  }
+  function isExpired(link) {
+    return Boolean(link.expires_at) && Date.parse(link.expires_at) <= Date.now();
+  }
+
+  function el(tag, text, className) {
+    var node = document.createElement(tag);
+    if (text !== undefined) { node.textContent = text; }
+    if (className) { node.className = className; }
+    return node;
+  }
+
+  function renderStats(container, stats) {
+    var meta = el('div', undefined, 'meta');
+    meta.appendChild(el('span', 'Clicks: ' + stats.total_clicks));
+    meta.appendChild(el('span', 'Last visit: ' + formatTime(stats.last_accessed)));
+    container.appendChild(meta);
+    var days = Object.keys(stats.clicks_by_day || {}).sort().slice(-7);
+    if (days.length) {
+      var max = Math.max.apply(null, days.map(function (d) { return stats.clicks_by_day[d]; }));
+      var list = el('ul', undefined, 'days');
+      days.forEach(function (day) {
+        var item = el('li');
+        item.appendChild(el('span', day, 'muted'));
+        var bar = el('progress');
+        bar.max = max;
+        bar.value = stats.clicks_by_day[day];
+        item.appendChild(bar);
+        item.appendChild(el('span', String(stats.clicks_by_day[day])));
+        list.appendChild(item);
+      });
+      container.appendChild(list);
+    }
+    if (stats.top_referrers && stats.top_referrers.length) {
+      container.appendChild(el('div', 'Top referrers: ' + stats.top_referrers
+        .map(function (r) { return r[0] + ' (' + r[1] + ')'; }).join(', '), 'hint'));
+    }
+  }
+
+  function render() {
+    var container = $('links');
+    container.textContent = '';
+    $('empty').hidden = links.length > 0;
+    links.forEach(function (link) {
+      var item = el('div', undefined, 'link-item');
+      var anchor = el('a', link.short_url, 'short');
+      anchor.href = link.short_url;
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      item.appendChild(anchor);
+      item.appendChild(el('div', link.url, 'target'));
+      var info = [];
+      info.push(link.expires_at ? (isExpired(link) ? 'Expired' : 'Expires ' + new Date(link.expires_at).toLocaleString()) : 'No expiry');
+      item.appendChild(el('div', info.join(' - '), 'hint'));
+      var stats = statsByCode[link.code];
+      if (stats === 'gone') {
+        item.appendChild(el('div', 'This link no longer exists on the server.', 'hint'));
+      } else if (stats) {
+        renderStats(item, stats);
+      }
+      var actions = el('div', undefined, 'actions');
+      var refresh = el('button', 'Refresh');
+      refresh.type = 'button';
+      refresh.dataset.action = 'refresh';
+      refresh.dataset.code = link.code;
+      var remove = el('button', stats === 'gone' ? 'Remove from list' : 'Delete', 'danger');
+      remove.type = 'button';
+      remove.dataset.action = 'delete';
+      remove.dataset.code = link.code;
+      actions.appendChild(refresh);
+      actions.appendChild(remove);
+      item.appendChild(actions);
+      container.appendChild(item);
+    });
+  }
+
+  function refreshStats(code) {
+    return api('GET', '/api/links/' + encodeURIComponent(code) + '/stats').then(function (stats) {
+      statsByCode[code] = stats;
+    }).catch(function (err) {
+      if (err.status === 404) { statsByCode[code] = 'gone'; } else { throw err; }
+    });
+  }
+
+  function refreshAll() {
+    return Promise.all(links.map(function (l) { return refreshStats(l.code); }))
+      .then(render)
+      .catch(function (err) { say(describeError(err), 'error'); });
+  }
+
+  function remember(link) {
+    links = links.filter(function (l) { return l.code !== link.code; });
+    links.unshift({ code: link.code, url: link.url, short_url: link.short_url, expires_at: link.expires_at });
+    saveLinks(links);
+  }
+
+  $('shorten-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var url = $('url').value.trim();
+    if (!url) { say('Enter a URL to shorten.', 'error'); $('url').focus(); return; }
+    var body = { url: url };
+    var alias = $('alias').value.trim();
+    var ttl = $('ttl').value;
+    if (alias) { body.alias = alias; }
+    if (ttl) { body.ttl_seconds = Number(ttl); }
+    var button = $('submit');
+    button.disabled = true;
+    say('Working...');
+    api('POST', '/api/shorten', body).then(function (link) {
+      remember(link);
+      var anchor = $('result-link');
+      anchor.textContent = link.short_url;
+      anchor.href = link.short_url;
+      $('result').hidden = false;
+      say(lastStatus === 200 ? 'This URL already had a short link; showing it.' : 'Short link created.', 'ok');
+      return refreshStats(link.code).then(render);
+    }).catch(function (err) {
+      $('result').hidden = true;
+      say(describeError(err), 'error');
+    }).then(function () { button.disabled = false; });
+  });
+
+  $('copy').addEventListener('click', function () {
+    var text = $('result-link').textContent;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { say('Copied to clipboard.', 'ok'); },
+        function () { say('Copy failed. Select the link and press Ctrl+C.', 'error'); });
+    } else {
+      say('Select the link and press Ctrl+C to copy.');
+    }
+  });
+
+  $('links').addEventListener('click', function (event) {
+    var target = event.target;
+    var action = target && target.dataset ? target.dataset.action : null;
+    var code = target && target.dataset ? target.dataset.code : null;
+    if (!action || !code) { return; }
+    if (action === 'refresh') {
+      refreshStats(code).then(render).catch(function (err) { say(describeError(err), 'error'); });
+    } else if (action === 'delete') {
+      var removeLocal = function () {
+        links = links.filter(function (l) { return l.code !== code; });
+        delete statsByCode[code];
+        saveLinks(links);
+        render();
+      };
+      if (statsByCode[code] === 'gone') { removeLocal(); return; }
+      api('DELETE', '/api/links/' + encodeURIComponent(code)).then(function () {
+        removeLocal();
+        say('Link deleted.', 'ok');
+      }).catch(function (err) {
+        if (err.status === 404) { removeLocal(); } else { say(describeError(err), 'error'); }
+      });
+    }
+  });
+
+  $('refresh-all').addEventListener('click', refreshAll);
+
+  api('GET', '/healthz').then(function () {
+    $('health').textContent = 'service online';
+    $('health').className = 'pill online';
+  }).catch(function () {
+    $('health').textContent = 'service offline';
+    $('health').className = 'pill offline';
+  });
+
+  render();
+  if (links.length) { refreshAll(); }
+}());
+</script>
+</body>
+</html>

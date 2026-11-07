@@ -78,6 +78,53 @@ def dependency_allowlist(allowed: frozenset[str] = frozenset()) -> Policy:
     return Policy("dependency-allowlist", "security", "Third-party imports must be pre-approved", check)
 
 
+# ---- web UI (HTML/JS) policies. Subject: the page source (str) ----
+_EXTERNAL = re.compile(r"""<(?:script|link|img|iframe|object|embed|source|video|audio)\b[^>]*\b(?:src|href|data)\s*=\s*["']?\s*(?:https?:)?//""",
+                       re.I)
+_CSS_EXTERNAL = re.compile(r"@import|url\(\s*[\"']?\s*(?:https?:)?//", re.I)
+_DOM_SINKS = re.compile(r"\.innerHTML|\.outerHTML|insertAdjacentHTML|document\s*\.\s*write|\beval\s*\(|new\s+Function\s*\(")
+_INLINE_HANDLER = re.compile(r"<[^>]+\son[a-z]+\s*=", re.I)
+_STYLE_ATTR = re.compile(r"<[^>]+\sstyle\s*=", re.I)
+_BLOCK_WITH_ATTRS = re.compile(r"<(script|style)(?=[\s/])", re.I)
+
+
+def ui_no_external_resources() -> Policy:
+    def check(html: str) -> list[str]:
+        out = ["page loads an external resource (script, stylesheet, image or frame)"] if _EXTERNAL.search(html) else []
+        return out + (["stylesheet imports or references an external URL"] if _CSS_EXTERNAL.search(html) else [])
+    return Policy("ui-no-external-resources", "security", "A UI may not pull code or assets from other hosts", check)
+
+
+def ui_no_unsafe_dom_sinks() -> Policy:
+    def check(html: str) -> list[str]:
+        return [f"unsafe DOM API used: {m}" for m in sorted(set(x.strip(". (") for x in _DOM_SINKS.findall(html)))]
+    return Policy("ui-no-unsafe-dom-sinks", "security", "No innerHTML/eval/document.write: render data as text", check)
+
+
+def ui_no_inline_handlers() -> Policy:
+    def check(html: str) -> list[str]:
+        return ["inline event-handler attribute (onclick=...) found"] if _INLINE_HANDLER.search(html) else []
+    return Policy("ui-no-inline-event-handlers", "security", "Use addEventListener so a strict CSP can apply", check)
+
+
+def ui_no_inline_style_attributes() -> Policy:
+    def check(html: str) -> list[str]:
+        return ["inline style attribute found; use a class in the <style> block"] if _STYLE_ATTR.search(html) else []
+    return Policy("ui-no-inline-style-attributes", "security", "Style attributes cannot be covered by the CSP hash", check)
+
+
+def ui_csp_compatible_blocks() -> Policy:
+    def check(html: str) -> list[str]:
+        return ["<script>/<style> must be bare tags (no attributes) so the server can hash them for its CSP"] \
+            if _BLOCK_WITH_ATTRS.search(html) else []
+    return Policy("ui-csp-compatible-blocks", "security", "Inline blocks must be hashable by the CSP builder", check)
+
+
+def ui_set() -> PolicySet:
+    return PolicySet(no_hardcoded_secrets(), ui_no_external_resources(), ui_no_unsafe_dom_sinks(),
+                     ui_no_inline_handlers(), ui_no_inline_style_attributes(), ui_csp_compatible_blocks())
+
+
 def default_set(allowed_dependencies: frozenset[str] = frozenset()) -> PolicySet:
     return PolicySet(no_hardcoded_secrets(), no_dangerous_calls(), no_unsafe_imports(),
                      dependency_allowlist(allowed_dependencies))

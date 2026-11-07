@@ -1,0 +1,24 @@
+{
+  "ticket": "BUG-142",
+  "summary": "Clicks outlive their link because the database never enforces the ON DELETE CASCADE declared in the schema",
+  "root_cause": "SQLite enforces foreign keys per connection and only when 'PRAGMA foreign_keys = ON' is issued. LinkRepository never issues it, so deleting a link leaves its click rows behind. Analytics are looked up by code alone, so a re-created alias inherits them.",
+  "impacted": [
+    {"symbol": "LinkRepository.__init__", "reason": "Connection setup: enable foreign key enforcement and run the one-time orphan clean-up migration"},
+    {"symbol": "LinkRepository.delete", "reason": "Relies solely on the cascade; must delete the link's clicks explicitly"},
+    {"symbol": "LinkRepository.stats", "reason": "Where the symptom appears (aggregates by code). Reviewed, no change needed"},
+    {"symbol": "ShortenerService.delete", "reason": "Calls repo.delete. Reviewed, no change needed"},
+    {"symbol": "ShortenerService.shorten", "reason": "Alias reuse path re-adds the same code. Reviewed, no change needed"}
+  ],
+  "new_symbols": ["LinkRepository._purge_orphans"],
+  "apis_affected": ["DELETE /api/links/{code}", "GET /api/links/{code}/stats", "POST /api/shorten (alias reuse)"],
+  "data_flows": [
+    "DELETE -> ShortenerService.delete -> LinkRepository.delete -> links row removed, clicks rows left behind (bug)",
+    "POST alias -> LinkRepository.add -> stats(code) counts the old clicks (symptom)"
+  ],
+  "data_migration": "Existing databases may hold orphaned clicks: purge them at startup with a single idempotent statement",
+  "risks": [
+    "The purge deletes data: only rows with no parent link, which no API can reach",
+    "Startup time grows with the size of the clicks table (one anti-join on an indexed column)"
+  ],
+  "out_of_scope": ["Authentication or ownership checks on delete", "Retention policy for old clicks"]
+}

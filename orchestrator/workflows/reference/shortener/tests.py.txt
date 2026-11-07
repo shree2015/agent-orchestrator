@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import io
 import json
 import sqlite3
@@ -32,6 +34,8 @@ def call_app(app, method, path, body=None, extra=None):
         seen["status"], seen["headers"] = int(status.split()[0]), dict(headers)
 
     out = b"".join(app(environ, start_response))
+    if seen["headers"].get("Content-Type", "").startswith("text/html"):
+        return seen["status"], seen["headers"], out.decode("utf-8")
     return seen["status"], seen["headers"], (json.loads(out) if out else None)
 
 
@@ -293,3 +297,45 @@ def test_api_hides_internal_errors():
     app = make_app(Exploding(clock=FakeClock()))
     status, _, body = call_app(app, "POST", "/api/shorten", {"url": "https://example.com"})
     assert status == 500 and "boom" not in json.dumps(body) and body["error"]["code"] == "internal_error"
+
+
+# ------------------------------------------------------------------ web UI serving
+UI_PAGE = "<html><head><style>p{color:red}</style></head><body><script>var x = 1;</script></body></html>"
+
+
+def sha_token(body):
+    return "'sha256-" + base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode() + "'"
+
+
+def test_ui_is_served_at_root_with_strict_security_headers():
+    app, _, _ = make_test_app(ui_html=UI_PAGE)
+    status, headers, _ = call_app(app, "GET", "/")
+    assert status == 200 and headers["Content-Type"] == "text/html; charset=utf-8"
+    assert headers["X-Content-Type-Options"] == "nosniff" and headers["Referrer-Policy"] == "no-referrer"
+    csp = headers["Content-Security-Policy"]
+    assert "default-src 'none'" in csp and "frame-ancestors 'none'" in csp and "unsafe-inline" not in csp
+
+
+def test_csp_allows_exactly_the_pages_own_inline_blocks_by_hash():
+    csp = csp_for(UI_PAGE)
+    assert f"script-src {sha_token('var x = 1;')};" in csp and f"style-src {sha_token('p{color:red}')};" in csp
+    assert sha_token("alert(1)") not in csp
+
+
+def test_csp_without_inline_blocks_denies_scripts_and_styles():
+    csp = csp_for("<html><body>plain</body></html>")
+    assert "script-src 'none'" in csp and "style-src 'none'" in csp
+
+
+def test_root_is_not_found_when_no_ui_is_configured_and_rejects_other_methods_when_it_is():
+    plain, _, _ = make_test_app()
+    assert call_app(plain, "GET", "/")[0] == 404
+    with_ui, _, _ = make_test_app(ui_html=UI_PAGE)
+    assert call_app(with_ui, "POST", "/")[0] == 405 and call_app(with_ui, "DELETE", "/")[0] == 405
+
+
+def test_ui_page_does_not_disturb_api_routes():
+    app, _, _ = make_test_app(ui_html=UI_PAGE)
+    assert call_app(app, "GET", "/healthz")[0] == 200
+    status, _, body = call_app(app, "POST", "/api/shorten", {"url": "https://example.com/with-ui"})
+    assert status == 201 and call_app(app, "GET", "/" + body["code"])[0] == 302

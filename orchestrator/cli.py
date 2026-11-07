@@ -1,14 +1,12 @@
-"""Usage:  python -m orchestrator.cli run slugify|shortener [--approve ask|auto|deny:<node>] [--fail developer:2]
+"""Usage:  python -m orchestrator.cli run slugify|shortener|brownfield [--approve ask|auto|deny:<node>] [--fail developer:2]
                                               [--leak-secret] [--revise-design ok|fail|reject]
                                               [--backoff 0.1] [--max-replans 3] [--run-root runs]
                                               [--violate secret|import|undocumented|thin-tests|empty-docs]
 
-Policy demos (each makes ONE named policy fire; see docs/policies.md):
-  --violate secret        security/no-hardcoded-secrets      -> developer retried
-  --violate import        security/dependency-allowlist      -> developer retried
-  --violate undocumented  compliance/public-api-documented   -> developer retried
-  --violate thin-tests    compliance/minimum-tests           -> run halts (tests keep failing policy)
-  --violate empty-docs    compliance/docs-cover-public-api   -> run halts (docs keep failing policy)
+Policy demos (each makes named policies fire; names are per workflow, see docs/policies.md):
+  slugify / shortener:  --violate secret | import | undocumented | thin-tests | empty-docs
+  shortener only:       --violate ui-innerhtml | ui-cdn | ui-unlabelled
+  brownfield:           --violate scope-creep | api-break | ungrounded-impact | no-regression-test | drop-tests | changelog-no-ticket
   --revise-design ok --max-replans 0   change control refuses the re-plan; system stays in last good state
 
 Resilience demos:
@@ -21,16 +19,40 @@ Resilience demos:
 from __future__ import annotations
 
 import argparse
+import sys
 
 from .governance import approvals
 from .governance.policies import GovernanceError
 from .runner import run_workflow
-from .workflows import shortener, slugify
+from .workflows import brownfield, shortener, slugify
 
-WORKFLOWS = {"slugify": slugify, "shortener": shortener}
+WORKFLOWS = {"slugify": slugify, "shortener": shortener, "brownfield": brownfield}
+
+
+def scripted_answers(wf, names) -> dict | None:
+    """Turn --violate names into per-role scripted LLM answers.
+
+    A normal violation is the agent's FIRST answer (then it recovers); a persistent one repeats, so the
+    policy must hold and the run halts.
+    """
+    scripted: dict[str, list[str]] = {}
+    recovering: list[str] = []
+    for name in names:
+        role, bad, persistent = wf.VIOLATIONS[name]
+        if persistent:
+            scripted[role] = [bad]
+        else:
+            scripted.setdefault(role, []).append(bad)
+            recovering.append(role)
+    good = wf.make_llm().defaults
+    for role in dict.fromkeys(recovering):
+        scripted[role].append(good[role])              # then a good answer
+    return scripted or None
 
 
 def main(argv=None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):            # Windows consoles are not always UTF-8
+        sys.stdout.reconfigure(errors="replace")
     p = argparse.ArgumentParser(prog="orchestrate")
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
@@ -41,9 +63,8 @@ def main(argv=None) -> int:
     r.add_argument("--revise-design", choices=["ok", "fail", "reject"],
                    help="after a successful run, revise the design (dynamic re-plan)")
     r.add_argument("--backoff", type=float, default=0.0, help="base retry backoff in seconds (doubles each retry)")
-    r.add_argument("--violate", action="append", default=[],
-                   choices=["secret", "import", "undocumented", "thin-tests", "empty-docs"],
-                   help="make the mock LLM produce output that breaks one named policy")
+    r.add_argument("--violate", action="append", default=[], metavar="NAME",
+                   help="make the mock LLM produce output that breaks one named policy (names depend on the workflow)")
     r.add_argument("--max-replans", type=int, default=3, help="change control: re-plans allowed per run")
     r.add_argument("--run-root", default="runs")
     a = p.parse_args(argv)
@@ -51,17 +72,10 @@ def main(argv=None) -> int:
     fail = {k: int(v) for k, v in (x.split(":") for x in a.fail)}
     violations = list(a.violate) + (["secret"] if a.leak_secret else [])
     wf = WORKFLOWS[a.workflow]
-    fx = wf.FIXTURES
-    bad_code = {"secret": fx["bad_secret"], "import": fx["bad_import"], "undocumented": fx["undocumented"]}
-    scripted = {}
-    dev_bad = [bad_code[v] for v in violations if v in bad_code]
-    if dev_bad:                                   # bad answers first, then a good one
-        scripted["developer"] = dev_bad + [fx["good_code"]]
-    if "thin-tests" in violations:
-        scripted["tester"] = [fx["thin_tests"]]   # persistent: the policy must hold
-    if "empty-docs" in violations:
-        scripted["doc_writer"] = [""]
-    scripted = scripted or None
+    unknown = [v for v in violations if v not in wf.VIOLATIONS]
+    if unknown:
+        p.error(f"--violate {unknown[0]!r} is not defined for '{a.workflow}'; choose from: {', '.join(sorted(wf.VIOLATIONS))}")
+    scripted = scripted_answers(wf, violations)
     llm = wf.make_llm(fail_times=fail, scripted=scripted)
     approver = (approvals.cli_approver if a.approve == "ask" else approvals.auto_approver if a.approve == "auto"
                 else approvals.deny_approver(*a.approve.split(":")[1:]))
@@ -91,7 +105,7 @@ def main(argv=None) -> int:
         print(f"\nWORKFLOW REJECTED BY GOVERNANCE LINT:\n  " + "\n  ".join(str(v) for v in exc.violations))
         return 2
     print(f"\nStatus: {res['status'].value} | run dir: {res['run_dir']}")
-    print((res["run_dir"] / "report.md").read_text())
+    print((res["run_dir"] / "report.md").read_text(encoding="utf-8"))
     return 0 if res["metrics"]["run_success"] else 1
 
 

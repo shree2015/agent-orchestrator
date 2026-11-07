@@ -1,25 +1,28 @@
 {
-  "goal": "A URL shortener service: create short links, redirect, expire, and report click analytics, with reliability and abuse controls",
+  "goal": "A URL shortener service: create short links, redirect, expire, and report click analytics, with reliability and abuse controls, plus a simple web UI",
   "functional": [
     "POST /api/shorten {url, alias?, ttl_seconds?} -> 201 (new) or 200 (existing permanent link) with code and short_url",
     "GET /{code} -> 302 redirect to the original URL; 404 unknown; 410 expired",
     "GET /api/links/{code} -> link metadata; GET /api/links/{code}/stats -> total clicks, clicks per day, last access, top referrers",
     "DELETE /api/links/{code} -> 204, removing the link and its analytics",
     "Custom aliases (3-32 chars, reserved words blocked); optional expiry; GET /healthz",
-    "Rate limiting on write endpoints with a Retry-After header"
+    "Rate limiting on write endpoints with a Retry-After header",
+    "GET / serves a single-page web UI: create links (optional alias and expiry), copy the result, list links created in this browser with live stats, delete"
   ],
   "ambiguities": [
     "Same URL submitted twice -> reuse the existing permanent link (idempotent); links with a TTL or alias are always distinct (assumed)",
     "Private/loopback/credentialed URLs are rejected to limit abuse (assumed)",
     "Expired alias may be reclaimed by a new link; expired links keep their stats readable (assumed)",
     "Analytics is best-effort: a failed click write must never break a redirect (assumed)",
-    "Rate limit is per client address, fixed window, writes only (assumed; proxies need trusted-header handling in production)"
+    "Rate limit is per client address, fixed window, writes only (assumed; proxies need trusted-header handling in production)",
+    "There is no list-links endpoint, so the UI remembers links created in this browser (localStorage) instead of listing server-side (assumed; avoids exposing other users' links without authentication)"
   ],
   "acceptance": [
     "A shortened link redirects to its target with HTTP 302",
     "Clicks appear in stats by day and by referrer",
     "An expired link returns 410 and never redirects",
     "Concurrent shortening never produces duplicate codes",
-    "An analytics failure still redirects; a rate-limited client receives 429 with Retry-After"
+    "An analytics failure still redirects; a rate-limited client receives 429 with Retry-After",
+    "The UI loads no external resources and runs under a strict Content-Security-Policy (no unsafe-inline)"
   ]
 }

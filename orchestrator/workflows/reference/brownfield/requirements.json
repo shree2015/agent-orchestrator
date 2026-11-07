@@ -1,0 +1,21 @@
+{
+  "ticket": "BUG-142",
+  "goal": "Deleting a short link must remove its analytics so a re-created alias starts with zero clicks, and already-orphaned data must be repaired",
+  "functional": [
+    "After DELETE /api/links/{code}, no click rows for that code remain",
+    "Re-creating the same alias yields stats with total_clicks 0 and empty by-day and referrer breakdowns",
+    "On startup, click rows whose link does not exist are removed (idempotent)",
+    "Public API (routes, request and response shapes, Python signatures) is unchanged"
+  ],
+  "ambiguities": [
+    "Should orphaned historical clicks be purged or archived? Assumed purge: they are unreachable through the API and have no owner",
+    "Is 'delete' a hard delete? Assumed yes, matching current behaviour of DELETE /api/links/{code}",
+    "Should the fix rely on SQLite foreign keys alone? Assumed no: delete explicitly as well, so correctness does not depend on a per-connection pragma"
+  ],
+  "acceptance": [
+    "Regression test fails on the current code and passes after the fix",
+    "All previously passing tests still pass and none are removed",
+    "Public API signatures are backward compatible",
+    "Changes are limited to the symbols declared in the impact analysis"
+  ]
+}

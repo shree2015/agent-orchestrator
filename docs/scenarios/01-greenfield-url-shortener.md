@@ -7,10 +7,11 @@ aliases, rate limiting and basic abuse protection. Ship tests and docs."
 ```
 requirements -> design* -> implementation -> tests  ->\
                                           -> docs   ->  review -> release*
+                                          -> ui     ->/
 ```
 `*` = human approval checkpoint (design and release are tagged `high_impact`, and the workflow linter
-refuses to run if they lack approval). `tests` and `docs` run **in parallel** after `implementation`; `review` is
-the synchronisation point and waits for both.
+refuses to run if they lack approval). `tests`, `docs` and `ui` run **in parallel** after `implementation`; `review` is
+the synchronisation point and waits for all three.
 
 | Node | Agent | Exit gate(s) that must pass before the output is committed |
 |---|---|---|
@@ -19,8 +20,9 @@ the synchronisation point and waits for both.
 | implementation | developer (fallback: developer_fallback) | valid Python; security policies; public API documented; change-control limits |
 | tests | tester | valid Python; **tests pass against the implementation in a sandbox**; at least 3 tests |
 | docs | doc_writer | docs mention every public function/class |
+| ui | frontend | HTML/JS security (no external resources, no innerHTML/eval, no inline handlers or styles, CSP-compatible blocks); documented API used; accessibility basics; change-control limits |
 | review | reviewer | must start with APPROVE |
-| release | release_manager | **entry gate** re-verifies all evidence; then human approval |
+| release | release_manager | **entry gate** re-verifies all evidence (including the UI); then human approval |
 
 ## 2. Orchestration behaviours to show
 Run each and open `runs/<id>/report.md` (nodes, governance timeline, lineage, metrics):
@@ -35,10 +37,11 @@ python -m orchestrator.cli run shortener --approve deny:release              # h
 ```
 
 ## 3. Validation (what makes the output trustworthy)
-* The generated service is **executed**: its 27 tests run in an isolated process; a failing test blocks the commit.
+* The generated service is **executed**: its 32 tests run in an isolated process; a failing test blocks the commit.
 * **Mutation check** (done by hand during development): 9 realistic defects injected into the service
   (expiry ignored, private hosts allowed, analytics failure breaking redirects, orphaned clicks, no idempotency,
   limiter never triggering, no collision retry, no alias reclaim, header injection) were all caught by those tests.
+* `tests/test_ui.py` also drives the web page's real script (Node harness, fake DOM) against a live server.
 * `tests/test_shortener_workflow.py` starts the generated file as a **real HTTP server** and drives shorten,
   redirect, stats and an SSRF-style rejection over the network.
 * Governance evidence is in the hash-chained `audit.jsonl` (verified in the report: "Audit chain intact").

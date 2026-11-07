@@ -12,6 +12,7 @@ Built from three layers: `make_app` (WSGI HTTP adapter) -> `ShortenerService` (b
 | `GET /api/links/{code}/stats` | 200 | `total_clicks`, `clicks_by_day`, `last_accessed`, `top_referrers`. |
 | `DELETE /api/links/{code}` | 204 | Removes the link and its clicks. Rate limited. |
 | `GET /healthz` | 200 | Liveness. |
+| `GET /` | 200 HTML | Web UI, only when `ui_html` is supplied to `make_app` (`serve` loads `ui.html` from the module's folder). |
 
 Errors are JSON `{"error": {"code", "message"}}`:
 | Exception | Status | Code |
@@ -34,6 +35,10 @@ Errors are JSON `{"error": {"code", "message"}}`:
 * `LinkRepository` owns the SQL schema (links, clicks) and aggregates analytics.
 * `ShortenerService` allocates codes, retries collisions, reuses permanent links, expires links and records clicks.
 * `make_app` builds the WSGI app; `serve` runs it with the standard-library server (development only).
+* `csp_for` builds the Content-Security-Policy for the UI by hashing its inline script and style blocks, so no `unsafe-inline` is needed.
+
+## Web UI
+Open `http://localhost:8000/` after starting the server. Create links with an optional alias and expiry, copy the result, and see links created in this browser with live click stats (no list endpoint exists, so the browser remembers them). The page uses no external resources, renders all data as text, and is served with `nosniff`, `no-referrer` and a hash-based CSP.
 
 ## Reliability and safety
 Collision retry then 503; analytics failures never break redirects; expired aliases can be reclaimed; parameterised SQL; 500 responses never expose internals; request bodies capped at 4 KB.

@@ -1,0 +1,6 @@
+Fix plan for BUG-142 (smallest change that removes the cause and repairs existing data):
+1. LinkRepository.__init__: issue PRAGMA foreign_keys = ON (restores the declared ON DELETE CASCADE), then call a new private _purge_orphans() once per start-up.
+2. LinkRepository.delete: delete the link's clicks explicitly inside the same transaction, so correctness does not depend on the pragma.
+3. _purge_orphans (new, private): DELETE FROM clicks WHERE code NOT IN (SELECT code FROM links). Idempotent, safe to re-run.
+No change to routes, payloads or public signatures. Rollout: deploy normally; the purge runs on first start. Rollback: revert the commit; purged rows were unreachable orphans, so nothing user-visible is lost.
+Validation: three regression tests (re-used alias, delete without pragma, startup purge) must fail on the old code and pass on the new code; all 31 existing tests must keep passing.

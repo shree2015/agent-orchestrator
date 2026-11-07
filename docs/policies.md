@@ -20,6 +20,16 @@ audit log, the run report and the metrics all say *which* rule fired.
 | `code-requires-security-gate` | change control | workflow lint | workflow rejected |
 | `release-requires-compliance-gate` | change control | workflow lint | workflow rejected |
 | re-plan needs a reason; `max_replans` budget | change control | `Engine.invalidate()` | change rejected, system stays in last good state |
+| `ui-no-external-resources` | security | `ui` exit gate | retry -> safe-stop |
+| `ui-no-unsafe-dom-sinks` (innerHTML, eval, document.write...) | security | `ui` exit gate | same |
+| `ui-no-inline-event-handlers`, `ui-no-inline-style-attributes` | security | `ui` exit gate | same |
+| `ui-csp-compatible-blocks` (script/style must be bare so the server can hash them) | security | `ui` exit gate | same |
+| `ui-uses-documented-api`, `ui-accessibility-basics` | compliance | `ui` exit gate | same |
+| `impact-analysis-grounded` | compliance | `impact_analysis` exit gate (brownfield) | retry -> safe-stop |
+| `no-tests-removed`, `regression-test-reproduces-bug` | compliance | `tests` exit gate (brownfield) | same |
+| `changelog-references-ticket` | compliance | `docs` exit gate (brownfield) | same |
+| `public-api-stable` | change control | `implementation` exit gate (brownfield, via `ChangeSet`) | same |
+| `change-within-declared-impact` | change control | `implementation` exit gate (brownfield) | same |
 
 ## Three layers, three subjects
 
@@ -34,6 +44,11 @@ A gate only protects you if it is attached. Nodes carry tags (`code`, `high_impa
 `lint_graph` refuses to run a workflow in which a tagged node lacks its mandatory control. Governance
 cannot be silently configured away; the refusal itself is written to the audit log (`policy_lint`).
 
+## Brownfield note
+The brownfield policies are *bound to a baseline*: gates are built with the real baseline code/tests
+(`gates.brownfield_change_gate`, `within_declared_impact`, `regression_reproduced`...). See ADR 003 and
+`docs/scenarios/02-brownfield-orphaned-clicks.md`.
+
 ## Demos
 ```
 python -m orchestrator.cli run slugify --approve auto --violate secret        # security
@@ -42,6 +57,8 @@ python -m orchestrator.cli run slugify --approve auto --violate undocumented  # 
 python -m orchestrator.cli run slugify --approve auto --violate thin-tests    # compliance, halts
 python -m orchestrator.cli run slugify --approve auto --violate empty-docs    # compliance, halts
 python -m orchestrator.cli run slugify --approve auto --revise-design ok --max-replans 0   # change control
+python -m orchestrator.cli run shortener --approve auto --violate ui-innerhtml   # UI security policy
+python -m orchestrator.cli run brownfield --approve auto --violate scope-creep    # brownfield change control
 ```
 Open `runs/<id>/report.md`: the metrics table has `policy_violations` (counts per policy id, once per
 blocked output) and `changes_rejected`.

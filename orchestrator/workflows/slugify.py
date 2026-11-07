@@ -7,9 +7,14 @@ from __future__ import annotations
 from ..agents.llm_agent import llm_agent
 from ..core.graph import Graph, Node
 from ..governance import gates as g
+from ..governance.policies.compliance import RELEASE_EVIDENCE
 from ..llm import mock_client as mc
 
 REQUIREMENT = "Write a Python function slugify(text) that turns arbitrary text into a URL-safe slug, with tests and docs."
+
+
+def _release_checklist_extra(ctx):
+    return {"ui_present": "ui" in ctx} if "ui" in ctx else {}
 
 
 def release_agent(ctx):
@@ -21,13 +26,16 @@ def release_agent(ctx):
         "tests_passed_in_sandbox": "tests" in ctx,
         "docs_present": "docs" in ctx,
         "review_approved": ctx["review"]["content"].upper().startswith("APPROVE"),
+        **_release_checklist_extra(ctx),
     }
     ready = all(checklist.values())
     return {"role": "release_manager", "content": f"READY={ready}\n{checklist}",
-            "derived_from": ["requirements", "design", "implementation", "tests", "docs", "review"]}
+            "derived_from": ["requirements", "design", "implementation", "tests", "docs", "review"]
+                            + (["ui"] if "ui" in ctx else [])}
 
 
-def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", max_lines: int = 200):
+def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", max_lines: int = 200,
+          ui: bool = False):
     graph = (
         Graph()
         .add(Node("requirements", "requirements",
@@ -48,14 +56,18 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
         .add(Node("docs", "doc_writer", depends_on=("implementation",),
                   exit_gates=(g.docs_compliance,),
                   description="Generate documentation (parallel with tests)"))
-        .add(Node("review", "reviewer", depends_on=("tests", "docs"),
+        .add(Node("review", "reviewer", depends_on=("tests", "docs") + (("ui",) if ui else ()),
                   exit_gates=(g.reviewer_approves,),
                   description="Sync point: critic reviews all artifacts"))
         .add(Node("release", "release_manager", depends_on=("review",),
-                  entry_gates=(g.release_compliance,),
+                  entry_gates=(g.release_compliance_for(RELEASE_EVIDENCE + (("ui",) if ui else ())),),
                   requires_approval=True, tags=("high_impact", "release"),
                   description="Release readiness: compliance evidence re-verified, then human approval"))
     )
+    if ui:  # a web UI is one more parallel branch: it only needs the implementation's API contract
+        graph.add(Node("ui", "frontend", depends_on=("implementation",), max_retries=2, tags=("code",),
+                       exit_gates=(g.ui_security, g.ui_compliance, g.change_control_gate("ui.html", max_lines=500)),
+                       description="Generate the web UI; HTML/JS security + API-wiring + accessibility gates"))
     agents = {
         "requirements": llm_agent(llm, "requirements", "Extract requirements as JSON with keys goal, functional, ambiguities, acceptance.", seed=requirement),
         "architect": llm_agent(llm, "architect", "Produce a concise design.", ("requirements",)),
@@ -66,6 +78,8 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
         "reviewer": llm_agent(llm, "reviewer", "Reply APPROVE or REJECT with reasons.", ("implementation", "tests", "docs")),
         "release_manager": release_agent,
     }
+    if ui:
+        agents["frontend"] = llm_agent(llm, "frontend", "Write ONE self-contained index.html (inline CSS and JS, no external resources) that calls the documented API.", ("requirements", "design", "implementation"))
     return graph, agents
 
 
@@ -73,6 +87,16 @@ def build(llm, requirement: str = REQUIREMENT, code_path: str = "slugify.py", ma
 FIXTURES = {
     "bad_secret": mc.BAD_CODE_SECRET, "bad_import": mc.BAD_CODE_IMPORT, "undocumented": mc.UNDOCUMENTED_CODE,
     "good_code": mc.GOOD_CODE, "thin_tests": mc.THIN_TESTS,
+}
+
+
+# name -> (agent role, bad output, persistent?)  persistent = the agent keeps producing it, so the policy must halt the run
+VIOLATIONS = {
+    "secret": ("developer", FIXTURES["bad_secret"], False),
+    "import": ("developer", FIXTURES["bad_import"], False),
+    "undocumented": ("developer", FIXTURES["undocumented"], False),
+    "thin-tests": ("tester", FIXTURES["thin_tests"], True),
+    "empty-docs": ("doc_writer", "", True),
 }
 
 

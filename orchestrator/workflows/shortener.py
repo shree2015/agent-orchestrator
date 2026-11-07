@@ -16,16 +16,21 @@ _REF = Path(__file__).parent / "reference" / "shortener"
 read = lambda name: (_REF / name).read_text(encoding="utf-8")
 
 REQUIREMENT = ("Build a URL shortener service: shorten, redirect with expiry, click analytics, "
-               "custom aliases, rate limiting and basic abuse protection. Ship tests and docs.")
+               "custom aliases, rate limiting and basic abuse protection, plus a simple web UI. Ship tests and docs.")
 CODE_PATH = "shortener.py"
 MAX_LINES = 600          # a whole service is bigger than the toy default of 200: an explicit, reviewed limit
 
 GOOD_CODE = read("shortener.py.txt")
+GOOD_UI = read("ui.html.txt")
+
+
+def _replace(text: str, old: str, new: str) -> str:
+    assert old in text, f"fixture fragment not found: {old[:40]!r}"
+    return text.replace(old, new, 1)
 
 
 def _without(text: str, fragment: str) -> str:
-    assert fragment in text, "fixture fragment not found"
-    return text.replace(fragment, "", 1)
+    return _replace(text, fragment, "")
 
 
 DEFAULTS = {
@@ -35,6 +40,7 @@ DEFAULTS = {
     "developer_fallback": GOOD_CODE,
     "tester": read("tests.py.txt"),
     "doc_writer": read("docs.md"),
+    "frontend": GOOD_UI,
 }
 
 FIXTURES = {
@@ -42,12 +48,27 @@ FIXTURES = {
     "bad_secret": GOOD_CODE + '\nAPI_KEY = "sk-live-1234567890abcdefgh"\n',
     "bad_import": "import requests\n" + GOOD_CODE,
     "undocumented": _without(GOOD_CODE, '    """Run the service with the standard-library WSGI server (development use; single-threaded)."""\n'),
+    "ui_innerhtml": _replace(GOOD_UI, "container.textContent = '';", "container.innerHTML = '';"),
+    "ui_cdn": _replace(GOOD_UI, "<title>", '<script src="https://cdn.example.com/lib.js"></script>\n<title>'),
+    "ui_unlabelled": _replace(GOOD_UI, '<label for="alias">Custom alias (optional)</label>', "<span>Custom alias (optional)</span>"),
     "thin_tests": 'def test_one():\n    assert validate_url("https://example.com/a") == "https://example.com/a"\n',
 }
 
 
+VIOLATIONS = {
+    "secret": ("developer", FIXTURES["bad_secret"], False),
+    "import": ("developer", FIXTURES["bad_import"], False),
+    "undocumented": ("developer", FIXTURES["undocumented"], False),
+    "thin-tests": ("tester", FIXTURES["thin_tests"], True),
+    "empty-docs": ("doc_writer", "", True),
+    "ui-innerhtml": ("frontend", FIXTURES["ui_innerhtml"], False),
+    "ui-cdn": ("frontend", FIXTURES["ui_cdn"], False),
+    "ui-unlabelled": ("frontend", FIXTURES["ui_unlabelled"], False),
+}
+
+
 def build(llm, requirement: str = REQUIREMENT):
-    return slugify.build(llm, requirement, code_path=CODE_PATH, max_lines=MAX_LINES)
+    return slugify.build(llm, requirement, code_path=CODE_PATH, max_lines=MAX_LINES, ui=True)
 
 
 def make_llm(fail_times=None, scripted=None):
